@@ -126,9 +126,22 @@ def main():
     task = st.selectbox("Task", task_options)
     save_files = st.checkbox("Save/Download results")
     
-    # ML Method selection (before running analysis/opt, as per original intent for multiple ML types)
-    ml_methods = ["rf", "nn", "lr", "svm"]  # Random Forest, Neural Net, Linear Regression, SVM
-    ml_method = st.selectbox("ML Method for Analysis & Optimization", ml_methods)
+    # ML Method selection with radio and full names (expanded to more methods from original intent)
+    ml_method_options = [
+        ("Random Forest Regressor", "rf"),
+        ("Neural Network", "nn"),
+        ("Linear Regression", "lr"),
+        ("Support Vector Regression", "svm"),
+        ("Decision Tree Regressor", "dt"),
+        ("Ridge Regression", "ridge")
+    ]
+    selected_ml = st.radio(
+        "ML Method for Analysis & Optimization",
+        [opt[0] for opt in ml_method_options],
+        index=0,
+        horizontal=True
+    )
+    ml_method = next(opt[1] for opt in ml_method_options if opt[0] == selected_ml)
     
     run_analysis = False
     run_opt = False
