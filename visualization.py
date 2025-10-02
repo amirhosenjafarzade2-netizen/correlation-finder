@@ -9,13 +9,14 @@ Preserves all graph types.
 import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import List
+from typing import List, Dict, Any  # Added Any
 import pandas as pd
 import numpy as np
 import seaborn as sns
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 import shap
+from config import Config  # Added: For config in generate_viz
 from utils import logger
 
 def plot_heatmap(
@@ -120,7 +121,7 @@ def plot_shap_summary(shap_values: np.ndarray, X_sample: pd.DataFrame, title: st
     plt.title(title, fontsize=16)
     return fig
 
-def generate_viz_from_analysis(results: Dict[str, any], params: List[str], config: Config) -> List[plt.Figure | go.Figure]:
+def generate_viz_from_analysis(results: Dict[str, Any], params: List[str], config: Config) -> List[plt.Figure | go.Figure]:
     """Generate all selected visualizations using results from analysis."""
     figs = []
     selected_viz = config.visualizations
@@ -142,23 +143,23 @@ def generate_viz_from_analysis(results: Dict[str, any], params: List[str], confi
         figs.append(fig)
     
     if 'pairplot' in selected_viz:
-        fig = plot_pairplot(results['df_regime'] or results['df'], params, 'Pair Plot of Parameters')  # Fallback to df if no regime
+        fig = plot_pairplot(results['df'], params, 'Pair Plot of Parameters')  # Use 'df' from results
         figs.append(fig)
     
     if 'parallel' in selected_viz:
-        fig = plot_parallel_coordinates(results['df_regime'] or results['df'], params, 'Parallel Coordinates')
+        fig = plot_parallel_coordinates(results['df'], params, 'Parallel Coordinates')
         figs.append(fig)
     
     if 'boxplot' in selected_viz:
-        fig = plot_boxplot(results['df_regime'] or results['df'], params, 'Box Plot of Parameters')
+        fig = plot_boxplot(results['df'], params, 'Box Plot of Parameters')
         figs.append(fig)
     
     if 'pca' in selected_viz:
-        fig = plot_pca(results['df_regime'] or results['df'], params, 'PCA 2D Plot')
+        fig = plot_pca(results['df'], params, 'PCA 2D Plot')
         figs.append(fig)
     
     if 'pca_3d' in selected_viz:
-        fig = plot_pca_3d(results['df_regime'] or results['df'], params, 'PCA 3D Plot')
+        fig = plot_pca_3d(results['df'], params, 'PCA 3D Plot')
         figs.append(fig)
     
     if 'rf_importance' in selected_viz and results['rf_importance']:
