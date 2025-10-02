@@ -153,6 +153,12 @@ def main():
             optimizer = st.selectbox("Optimizer", ["ga", "bayesian"])
         with col_opt2:
             target_name = st.selectbox("Target Parameter", params)
+        if st.button("Discover Symbolic Formula"):
+            from formula_discovery import discover_formula
+            features = [p for p in params if p != target_name]  # Or all params for multi-target
+            formula = discover_formula(df[features], df[target_name], features, method=ml_method, target_name=target_name)
+            st.latex(formula['str_formula'])  # Render equation
+            st.metric("Fit Score (R²)", formula['score'])
         interactive = st.checkbox("Enable Interactive Exploration")
         run_opt = st.button("Run Optimization")
     
