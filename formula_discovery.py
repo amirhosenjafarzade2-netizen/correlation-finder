@@ -18,6 +18,7 @@ PYSR_AVAILABLE = False  # Set to False to avoid Julia/PermissionError on Cloud
 # Method 2: gplearn (Pure Python GP; reliable fallback)
 try:
     from gplearn.genetic import SymbolicRegressor
+    from sklearn.utils.validation import check_array  # Explicit import for validation
     GPLEARN_AVAILABLE = True
 except ImportError:
     GPLEARN_AVAILABLE = False
@@ -65,6 +66,13 @@ def discover_formula(
     if feature_names is None:
         feature_names = [f"x{i}" for i in range(X.shape[1])]
     
+    # Ensure data is validated (fixes _validate_data issues with sklearn compat)
+    try:
+        X = check_array(X, ensure_2d=True, dtype=np.float64, force_all_finite=True)
+        y = np.asarray(y, dtype=np.float64).ravel()
+    except Exception as e:
+        raise FormulaDiscoveryError(f"Data validation failed: {e}")
+    
     # Default operators: arithmetic, power, exp/log, trig (as requested)
     if operators is None:
         operators = [
@@ -98,9 +106,10 @@ def discover_formula(
     elif method == "gplearn" and GPLEARN_AVAILABLE:
         try:
             # gplearn: Customizable GP; good fallback
+            # Reduced params for stability with pinned sklearn
             model = SymbolicRegressor(
-                population_size=5000,  # Larger for diversity
-                generations=n_iterations // 10,  # GP generations
+                population_size=2000,  # Smaller for faster runs
+                generations=n_iterations // 20,  # Fewer generations to avoid timeouts
                 tournament_size=20,
                 stopping_criteria=0.01,  # Stop if fit improves <1%
                 p_crossover=0.7,
@@ -108,7 +117,7 @@ def discover_formula(
                 p_hoist_mutation=0.05,
                 p_point_mutation=0.1,
                 max_samples=0.9,
-                verbose=1,
+                verbose=0,  # Silent for Streamlit
                 parsimony_coefficient=0.01,  # Penalize complexity
                 function_set=("add", "sub", "mul", "div", "log", "exp", "sin", "cos", "sqrt")  # From operators
             )
@@ -127,7 +136,6 @@ def discover_formula(
     else:
         # Fallback: Force gplearn if available
         if GPLEARN_AVAILABLE:
-            st.warning("Invalid method; falling back to gplearn.")
             return discover_formula(X, y, feature_names, "gplearn", max_complexity, n_iterations, operators, target_name)
         else:
             raise FormulaDiscoveryError(f"Method '{method}' unavailable. Install gplearn.")
