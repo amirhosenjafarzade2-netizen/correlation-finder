@@ -19,6 +19,7 @@ from models import train_neural_network, compute_shap_values, predict_nn
 from optimization import optimize_target
 from visualization import generate_viz_from_analysis
 from utils import logger, MissingDataError, InvalidPressureError, impute_missing_values
+from formula_discovery import discover_formula  # Added explicit import
 
 # Configure Plotly for Streamlit
 pio.renderers.default = 'browser'  # Or 'notebook' if needed
@@ -123,50 +124,24 @@ def main():
     
     # Task selection
     task_options = ["1: Relationship Analysis", "2: Target Optimization", "3: Symbolic Formula Discovery", "4: Both"]
-    task = st.selectbox("Task", task_options)
-    save_files = st.checkbox("Save/Download results")
+    task = st.selectbox("Select Task", task_options)
     
-    # ML Method selection with radio and full names (expanded to more methods from original intent)
-    ml_method_options = [
-        ("Random Forest Regressor", "rf"),
-        ("Neural Network", "nn"),
-        ("Linear Regression", "lr"),
-        ("Support Vector Regression", "svm"),
-        ("Decision Tree Regressor", "dt"),
-        ("Ridge Regression", "ridge")
-    ]
-    selected_ml = st.radio(
-        "ML Method for Analysis & Optimization",
-        [opt[0] for opt in ml_method_options],
-        index=0,
-        horizontal=True
-    )
-    ml_method = next(opt[1] for opt in ml_method_options if opt[0] == selected_ml)
+    run_analysis = task in ["1: Relationship Analysis", "4: Both"]
+    run_opt = task in ["2: Target Optimization", "4: Both"]
+    run_formula = task in ["3: Symbolic Formula Discovery", "4: Both"]
     
-    run_analysis = False
-    run_opt = False
-    run_formula = False
-    if task == task_options[0] or task == task_options[3]:
-        run_analysis = st.button("Run Analysis")
-    if task == task_options[1] or task == task_options[3]:
-        col_opt1, col_opt2 = st.columns(2)
-        with col_opt1:
-            optimizer = st.selectbox("Optimizer", ["ga", "bayesian"])
-        with col_opt2:
-            target_name = st.selectbox("Target Parameter", params)
-        interactive = st.checkbox("Enable Interactive Exploration")
-        run_opt = st.button("Run Optimization")
-    if task == task_options[2] or task == task_options[3]:
-        col_formula1, col_formula2 = st.columns(2)
-        with col_formula2:
-            target_name = st.selectbox("Target Parameter", params)
-        run_formula = st.button("Discover Symbolic Formula")
-        if run_formula:
-            from formula_discovery import discover_formula
-            features = [p for p in params if p != target_name]  # Or all params for multi-target
-            formula = discover_formula(df[features], df[target_name], features, method=ml_method, target_name=target_name)
-            st.latex(formula['str_formula'])  # Render equation
-            st.metric("Fit Score (R²)", formula['score'])
+    # ML method selection (for analysis/opt)
+    ml_method = st.selectbox("ML Method for Surrogates/Importance", ["rf", "nn", "lr", "svm"], index=0)
+    
+    # Optimizer for opt
+    optimizer = st.selectbox("Optimizer", ["ga", "bayesian"], index=0)
+    
+    # Target selection for opt/formula
+    target_name = st.selectbox("Target Parameter", params, index=0) if run_opt or run_formula else None
+    
+    # Interactive toggle
+    interactive = st.checkbox("Enable Interactive Exploration (for Optimization)")
+    save_files = st.checkbox("Enable Download Buttons")
     
     all_figures = []
     
@@ -289,6 +264,21 @@ def main():
             logger.error("Optimization failed", error=str(e))
             progress_bar.empty()
             status_text.empty()
+    
+    if run_formula:
+        try:
+            st.subheader("Symbolic Formula Discovery")
+            features = [p for p in params if p != target_name]
+            if len(features) < 1:
+                st.warning("Need at least one feature for formula discovery.")
+            else:
+                discovery_method = st.selectbox("Discovery Method", ["gplearn"], index=0)  # Default to gplearn
+                formula = discover_formula(df[features], df[target_name], features, method=discovery_method, target_name=target_name)
+                st.latex(formula['str_formula'])  # Render equation
+                st.metric("Fit Score (R²)", formula['score'])
+        except Exception as e:
+            st.error(f"Formula discovery error: {str(e)}")
+            logger.error("Formula discovery failed", error=str(e))
 
 if __name__ == "__main__":
     main()
