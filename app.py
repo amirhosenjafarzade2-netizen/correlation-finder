@@ -139,8 +139,6 @@ def main():
         interactive = st.checkbox("Enable Interactive Exploration")
         run_opt = st.button("Run Optimization")
     
-    all_figures = []
-    
     if run_analysis:
         try:
             df_analysis = df.copy()
@@ -149,14 +147,13 @@ def main():
             
             results = analyze_relationships(df_analysis, params, pressure_col, bubble_point, config)
             figs = generate_viz_from_analysis(results, params, config)
-            all_figures.extend(figs)
             
-            # Display figs
+            # Display figs with unique keys to avoid duplicate ID
             for i, fig in enumerate(figs):
                 if isinstance(fig, go.Figure):
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, use_container_width=True, key=f"analysis_plotly_{i}")
                 else:
-                    st.pyplot(fig)
+                    st.pyplot(fig, key=f"analysis_pyplot_{i}")
             
             # Downloads if save_files
             if save_files:
@@ -180,12 +177,13 @@ def main():
     if run_opt:
         try:
             optimal_df, opt_figs, shap_data = optimize_target(df, params, target_name, config, optimizer)
-            all_figures.extend(opt_figs)
             
             st.subheader("Optimal Parameters")
             st.dataframe(optimal_df)
-            for fig in opt_figs:
-                st.pyplot(fig)
+            
+            # Display opt figs with unique keys
+            for i, fig in enumerate(opt_figs):
+                st.pyplot(fig, key=f"opt_pyplot_{i}")
             
             if save_files:
                 excel_buffer = io.BytesIO()
@@ -234,15 +232,6 @@ def main():
         except Exception as e:
             st.error(f"Optimization error: {str(e)}")
             logger.error("Optimization failed", error=str(e))
-    
-    # Final display of all figs if both
-    if all_figures:
-        st.subheader("All Visualizations")
-        for fig in all_figures:
-            if isinstance(fig, go.Figure):
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.pyplot(fig)
 
 if __name__ == "__main__":
     main()
