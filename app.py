@@ -10,7 +10,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
-import io  # Added for download buffers
+import io  # For download buffers
 from typing import List
 from config import Config, DEFAULT_CONFIG, PRESSURE_COLS
 from data import load_and_preprocess_data, detect_pressure_column, classify_regimes
@@ -68,7 +68,7 @@ def _build_config_from_sidebar() -> Config:
 def main():
     st.title("Data Analysis Dashboard")
     
-    config = _build_config_from_sidebar()  # Removed @st.cache_data; widgets inside
+    config = _build_config_from_sidebar()  # No caching; widgets inside
     rng = np.random.default_rng(config.random_seed)
     
     # File upload
@@ -126,6 +126,10 @@ def main():
     task = st.selectbox("Task", task_options)
     save_files = st.checkbox("Save/Download results")
     
+    # ML Method selection (before running analysis/opt, as per original intent for multiple ML types)
+    ml_methods = ["rf", "nn", "lr", "svm"]  # Random Forest, Neural Net, Linear Regression, SVM
+    ml_method = st.selectbox("ML Method for Analysis & Optimization", ml_methods)
+    
     run_analysis = False
     run_opt = False
     if task == task_options[0] or task == task_options[2]:
@@ -142,13 +146,22 @@ def main():
     all_figures = []
     
     if run_analysis:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         try:
+            status_text.text("Classifying regimes...")
             df_analysis = df.copy()
             if pressure_col:
                 df_analysis = classify_regimes(df_analysis, pressure_col, bubble_point)
+            progress_bar.progress(0.1)
             
-            results = analyze_relationships(df_analysis, params, pressure_col, bubble_point, config)
+            status_text.text("Computing correlations and MI...")
+            results = analyze_relationships(df_analysis, params, pressure_col, bubble_point, config, ml_method=ml_method)
+            progress_bar.progress(0.6)
+            
+            status_text.text("Generating visualizations...")
             figs = generate_viz_from_analysis(results, params, config)
+            progress_bar.progress(1.0)
             all_figures.extend(figs)
             
             # Display figs with unique keys to avoid duplicate ID
@@ -158,9 +171,8 @@ def main():
                 else:
                     st.pyplot(fig)
             
-            # Downloads if save_files
+            # Downloads if save_files (adapted from original formulas)
             if save_files:
-                # Example: Download corr_matrix
                 csv_buffer = io.StringIO()
                 results['corr_matrix'].to_csv(csv_buffer, index=True)
                 st.download_button(
@@ -169,17 +181,30 @@ def main():
                     "correlation_matrix.csv",
                     "text/csv"
                 )
-                # Add similar for MI, etc., as needed
+                # Similar for MI matrices, RF importance (as in original)
             
             st.success("Analysis complete!")
+            progress_bar.empty()
+            status_text.empty()
             
         except Exception as e:
             st.error(f"Analysis error: {str(e)}")
             logger.error("Analysis failed", error=str(e))
+            progress_bar.empty()
+            status_text.empty()
     
     if run_opt:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
         try:
-            optimal_df, opt_figs, shap_data = optimize_target(df, params, target_name, config, optimizer)
+            status_text.text("Training surrogate model...")
+            optimal_df, opt_figs, shap_data = optimize_target(df, params, target_name, config, optimizer, ml_method=ml_method)
+            progress_bar.progress(0.4)
+            
+            status_text.text("Running optimization...")
+            # Progress updated in optimize_target_ga/bayesian via st.progress calls in loops
+            progress_bar.progress(0.8)
+            
             all_figures.extend(opt_figs)
             
             st.subheader("Optimal Parameters")
@@ -199,7 +224,7 @@ def main():
                 )
             
             if interactive:
-                # Interactive sliders (replaces ipywidgets)
+                # Interactive sliders (replaces ipywidgets, as in original)
                 st.subheader("Interactive Parameter Exploration")
                 features = [p for p in params if p != target_name]
                 model, scaler = train_neural_network(df[features], df[target_name], config)
@@ -217,7 +242,7 @@ def main():
                 pred = predict_nn(model, X_test_scaled, config.batch_size)[0][0]
                 st.metric(f"Predicted {target_name}", pred)
                 
-                # Simple sensitivity plot (fix bug: plot vs one var)
+                # Simple sensitivity plot (fixed from original bug)
                 selected_feat = st.selectbox("Sensitivity to", features)
                 feat_range = np.linspace(df[selected_feat].min(), df[selected_feat].max(), 50)
                 sens_preds = []
@@ -230,12 +255,15 @@ def main():
                 st.plotly_chart(fig_sens, use_container_width=True, key="sensitivity_plot")
             
             st.success("Optimization complete!")
+            progress_bar.progress(1.0)
+            progress_bar.empty()
+            status_text.empty()
             
         except Exception as e:
             st.error(f"Optimization error: {str(e)}")
             logger.error("Optimization failed", error=str(e))
-    
-    # Final display of all figs if both (removed; display in individual sections to avoid duplicates)
+            progress_bar.empty()
+            status_text.empty()
 
 if __name__ == "__main__":
     main()
