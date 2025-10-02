@@ -122,7 +122,7 @@ def main():
     bubble_point = st.session_state.get('bubble_point', config.bubble_point_default)
     
     # Task selection
-    task_options = ["1: Relationship Analysis", "2: Target Optimization", "3: Both"]
+    task_options = ["1: Relationship Analysis", "2: Target Optimization", "3: Symbolic Formula Discovery", "4: Both"]
     task = st.selectbox("Task", task_options)
     save_files = st.checkbox("Save/Download results")
     
@@ -145,22 +145,28 @@ def main():
     
     run_analysis = False
     run_opt = False
-    if task == task_options[0] or task == task_options[2]:
+    run_formula = False
+    if task == task_options[0] or task == task_options[3]:
         run_analysis = st.button("Run Analysis")
-    if task == task_options[1] or task == task_options[2]:
+    if task == task_options[1] or task == task_options[3]:
         col_opt1, col_opt2 = st.columns(2)
         with col_opt1:
             optimizer = st.selectbox("Optimizer", ["ga", "bayesian"])
         with col_opt2:
             target_name = st.selectbox("Target Parameter", params)
-        if st.button("Discover Symbolic Formula"):
+        interactive = st.checkbox("Enable Interactive Exploration")
+        run_opt = st.button("Run Optimization")
+    if task == task_options[2] or task == task_options[3]:
+        col_formula1, col_formula2 = st.columns(2)
+        with col_formula2:
+            target_name = st.selectbox("Target Parameter", params)
+        run_formula = st.button("Discover Symbolic Formula")
+        if run_formula:
             from formula_discovery import discover_formula
             features = [p for p in params if p != target_name]  # Or all params for multi-target
             formula = discover_formula(df[features], df[target_name], features, method=ml_method, target_name=target_name)
             st.latex(formula['str_formula'])  # Render equation
             st.metric("Fit Score (R²)", formula['score'])
-        interactive = st.checkbox("Enable Interactive Exploration")
-        run_opt = st.button("Run Optimization")
     
     all_figures = []
     
