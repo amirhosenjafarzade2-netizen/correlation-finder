@@ -3,7 +3,7 @@
 Symbolic Formula Discovery Module.
 Uses symbolic regression to evolve interpretable mathematical formulas from data.
 Supports multiple methods: PySR (recommended for speed/diversity), gplearn (classic GP).
-Fixed for scikit-learn compatibility issues in gplearn.
+Fixed for scikit-learn compatibility issues in gplearn and Streamlit Cloud permissions.
 """
 
 import numpy as np
@@ -12,37 +12,38 @@ from typing import List, Optional, Union, Dict
 import sympy as sp
 from sklearn.metrics import r2_score
 
-# Method 1: PySR (preferred)
+# Method 1: PySR (preferred, but skip on permission-restricted envs like Streamlit Cloud)
+PYSR_AVAILABLE = False
 try:
     from pysr import PySRRegressor
     PYSR_AVAILABLE = True
-except ImportError:
+except (ImportError, PermissionError, OSError) as e:
+    # Catch permission issues during Julia setup (common on Streamlit Cloud)
+    print(f"PySR import failed (likely permissions): {e}. Falling back to gplearn.")
     PYSR_AVAILABLE = False
-    print("PySR not available; install with 'pip install pysr' for best performance.")
 
 # Method 2: gplearn (with compatibility patch for scikit-learn >=1.2)
 GPLEARN_AVAILABLE = False
-if not PYSR_AVAILABLE:
-    try:
-        # Monkey-patch for scikit-learn >=1.2 compatibility
-        # Issue: _validate_data returns tuple (X,) when y=None, but gplearn expects X
-        from sklearn.utils.validation import _validate_data as original_validate_data
-        def patched_validate_data(X, y=None, **kwargs):
-            result = original_validate_data(X, y=y, **kwargs)
-            if y is None and isinstance(result, tuple) and len(result) == 1:
-                return result[0]  # Unpack for old API
-            return result
-        import sklearn.utils.validation as skval
-        skval._validate_data = patched_validate_data
+try:
+    # Monkey-patch for scikit-learn >=1.2 compatibility
+    # Issue: _validate_data returns tuple (X,) when y=None, but gplearn expects X
+    from sklearn.utils.validation import _validate_data as original_validate_data
+    def patched_validate_data(X, y=None, **kwargs):
+        result = original_validate_data(X, y=y, **kwargs)
+        if y is None and isinstance(result, tuple) and len(result) == 1:
+            return result[0]  # Unpack for old API
+        return result
+    import sklearn.utils.validation as skval
+    skval._validate_data = patched_validate_data
 
-        from gplearn.genetic import SymbolicRegressor
-        GPLEARN_AVAILABLE = True
-    except ImportError:
-        GPLEARN_AVAILABLE = False
-        print("gplearn not available; install with 'pip install gplearn==0.4.2'.")
-    except Exception as e:
-        print(f"gplearn import failed with patch: {e}")
-        GPLEARN_AVAILABLE = False
+    from gplearn.genetic import SymbolicRegressor
+    GPLEARN_AVAILABLE = True
+except ImportError:
+    print("gplearn not available; install with 'pip install gplearn==0.4.2'.")
+    GPLEARN_AVAILABLE = False
+except Exception as e:
+    print(f"gplearn import failed with patch: {e}")
+    GPLEARN_AVAILABLE = False
 
 class FormulaDiscoveryError(Exception):
     """Raised when formula discovery fails."""
@@ -52,7 +53,7 @@ def discover_formula(
     X: Union[pd.DataFrame, np.ndarray],
     y: Union[pd.Series, np.ndarray],
     feature_names: Optional[List[str]] = None,
-    method: str = "pysr",  # Default to PySR
+    method: str = "gplearn",  # Default to gplearn for cloud compatibility
     max_complexity: int = 10,
     n_iterations: int = 100,
     operators: Optional[List[str]] = None,
