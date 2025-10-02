@@ -1,14 +1,11 @@
 # requirements.txt
-# Required for the Data Analysis Dashboard Streamlit app
-# Generated based on used libraries; pin versions for stability
-
 pandas>=2.0.0
 numpy>=2.0.0
 matplotlib>=3.7.0
 seaborn>=0.12.0
 plotly>=5.14.0
 scipy>=1.10.0
-scikit-learn==1.0.2
+scikit-learn==1.0.2  # Pinned to fix gplearn compatibility
 tensorflow>=2.12.0
 deap>=1.3.0
 rich>=13.3.0
@@ -19,11 +16,6 @@ openpyxl>=3.1.0
 scikit-optimize>=0.9.0
 shap>=0.41.0
 streamlit>=1.28.0
-
-# For formula discovery (gplearn only; no Julia deps)
 gplearn>=0.4.2
 sympy>=1.12.0
-
-# Optional: For local dev/testing
-# jupyter (if running in notebook)
-# ipywidgets>=8.0.0  # Removed as not used in Streamlit
+pysr>=0.18.0  # Added for PySR support (optional, disable for Streamlit Cloud)
