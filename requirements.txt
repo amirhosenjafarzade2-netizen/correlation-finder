@@ -1,35 +1,32 @@
-# Core data/science libs (pinned for stability)
-numpy~=1.26.4  # Avoids dtype errors; compatible with pandas/sklearn
-pandas~=2.2.2
-matplotlib~=3.9.0
-seaborn~=0.13.2
-plotly~=5.22.0
-scipy~=1.14.1
+# Core data/science (lightweight, wheel-friendly)
+numpy==1.24.4  # Downgraded for sklearn compat; avoids dtype errors
+pandas==2.1.4
+matplotlib==3.8.2
+seaborn==0.13.0
+plotly==5.17.0
+scipy==1.11.4
 
-# ML basics
-scikit-learn~=1.5.2  # Latest; fixes gplearn compat (see code tweak below)
-joblib~=1.4.2
+# ML basics (no tensorflow)
+scikit-learn==1.3.2  # Compatible with gplearn; latest stable for 2025 cloud
+joblib==1.3.2
 
-# Advanced ML
-tensorflow~=2.17.0  # Updated; compatible with numpy 1.26
-shap~=0.46.0
+# Interpretability
+shap==0.42.1  # Downgraded; avoids conflicts
 
 # Optimization/GA
-deap~=1.4.1
-scikit-optimize~=0.10.2
+deap==1.3.2
+scikit-optimize==0.9.0
 
 # UI/Logging
-streamlit~=1.38.0
-rich~=13.7.1
-structlog~=24.2.0
-pydantic~=2.8.0
+streamlit==1.32.0  # Omit if not pinning; Streamlit auto-installs latest
+rich==13.6.0
+structlog==23.2.0
+pydantic==2.5.0
 
 # Excel/IO
-openpyxl~=3.1.5
+openpyxl==3.1.2
 
-# Formula Discovery (gplearn only for cloud; no pysr)
-gplearn~=0.4.2
-sympy~=1.13.1
-
-# Optional: If using Jupyter locally
-# jupyter~=1.0.0
+# Formula Discovery (fallback to no gplearn; use PySR local)
+sympy==1.12
+# gplearn==0.4.2  # Commented: Causes _validate_data error; remove for cloud
+# pysr==0.18.0    # Local only: Requires Julia (uncomment + install locally)
