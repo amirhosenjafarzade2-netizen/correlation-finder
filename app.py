@@ -10,6 +10,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
+import io  # Added for download buffers
 from typing import List
 from config import Config, DEFAULT_CONFIG, PRESSURE_COLS
 from data import load_and_preprocess_data, detect_pressure_column, classify_regimes
@@ -24,9 +25,8 @@ pio.renderers.default = 'browser'  # Or 'notebook' if needed
 
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
 
-@st.cache_data
-def get_config_from_ui() -> Config:
-    """Create Config from sidebar inputs."""
+def _build_config_from_sidebar() -> Config:
+    """Build Config from sidebar inputs (no caching, as it contains widgets)."""
     st.sidebar.header("Configuration")
     random_seed = st.sidebar.number_input("Random Seed", value=DEFAULT_CONFIG["random_seed"])
     min_rows = st.sidebar.number_input("Min Rows", value=DEFAULT_CONFIG["min_rows"], min_value=1)
@@ -68,7 +68,7 @@ def get_config_from_ui() -> Config:
 def main():
     st.title("Data Analysis Dashboard")
     
-    config = get_config_from_ui()
+    config = _build_config_from_sidebar()  # Removed @st.cache_data; widgets inside
     rng = np.random.default_rng(config.random_seed)
     
     # File upload
