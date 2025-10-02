@@ -11,6 +11,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 import io
+import sympy as sp
 from typing import List
 from config import Config, DEFAULT_CONFIG, PRESSURE_COLS
 from data import load_and_preprocess_data, detect_pressure_column, classify_regimes
@@ -121,7 +122,7 @@ def main():
     pressure_col = st.session_state.get('pressure_col')
     bubble_point = st.session_state.get('bubble_point', config.bubble_point_default)
     
-    # Task selection - UPDATED WITH FORMULA DISCOVERY
+    # Task selection
     task_options = [
         "1: Relationship Analysis", 
         "2: Target Optimization", 
@@ -173,6 +174,7 @@ def main():
         # Check library availability
         if not PYSR_AVAILABLE and not GPLEARN_AVAILABLE:
             st.error("No formula discovery libraries available. Install PySR or gplearn.")
+            st.info("Install with: `pip install gplearn` (recommended for ease) or `pip install pysr` (requires Julia)")
             return
         
         available_methods = []
@@ -337,8 +339,8 @@ def main():
             status_text.text(f"Discovering formula using {formula_method_key}...")
             progress_bar.progress(0.2)
             
-            X_formula = df[formula_features]
-            y_formula = df[formula_target]
+            X_formula = df[formula_features].copy()
+            y_formula = df[formula_target].copy()
             
             # Remove NaNs
             mask = ~(X_formula.isna().any(axis=1) | y_formula.isna())
@@ -353,6 +355,7 @@ def main():
             
             progress_bar.progress(0.4)
             
+            # Discover formula
             formula_result = discover_formula(
                 X_formula,
                 y_formula,
@@ -363,8 +366,9 @@ def main():
                 target_name=formula_target
             )
             
-            progress_bar.progress(1.0)
+            progress_bar.progress(0.8)
             
+            # Display results
             st.success("Formula discovery complete!")
             st.subheader("Discovered Formula")
             
@@ -377,36 +381,48 @@ def main():
             st.code(formula_result['str_formula'], language='text')
             
             # Evaluation plot
-            import sympy as sp
             equation = formula_result['equation']
             y_pred = []
-            for _, row in X_formula.iterrows():
-                val_dict = {sp.Symbol(f): row[f] for f in formula_features}
+            
+            for idx in range(len(X_formula)):
+                row = X_formula.iloc[idx]
+                val_dict = {sp.Symbol(str(f)): float(row[f]) for f in formula_features}
                 try:
-                    pred_val = float(equation.subs(val_dict))
+                    pred_val = float(equation.subs(val_dict).evalf())
                     y_pred.append(pred_val)
-                except:
+                except Exception as eval_error:
+                    logger.warning(f"Evaluation error at row {idx}", error=str(eval_error))
                     y_pred.append(np.nan)
             
             y_pred = np.array(y_pred)
             mask_valid = ~np.isnan(y_pred)
             
-            fig_formula = px.scatter(
-                x=y_formula[mask_valid],
-                y=y_pred[mask_valid],
-                labels={'x': f'Actual {formula_target}', 'y': f'Predicted {formula_target}'},
-                title='Formula Predictions vs Actual'
-            )
-            fig_formula.add_trace(
-                go.Scatter(
-                    x=[y_formula[mask_valid].min(), y_formula[mask_valid].max()],
-                    y=[y_formula[mask_valid].min(), y_formula[mask_valid].max()],
-                    mode='lines',
-                    name='Perfect Fit',
-                    line=dict(dash='dash', color='red')
+            if mask_valid.sum() > 0:
+                y_actual_valid = y_formula.values[mask_valid]
+                y_pred_valid = y_pred[mask_valid]
+                
+                fig_formula = px.scatter(
+                    x=y_actual_valid,
+                    y=y_pred_valid,
+                    labels={'x': f'Actual {formula_target}', 'y': f'Predicted {formula_target}'},
+                    title='Formula Predictions vs Actual'
                 )
-            )
-            st.plotly_chart(fig_formula, use_container_width=True)
+                
+                # Add perfect fit line
+                min_val = min(y_actual_valid.min(), y_pred_valid.min())
+                max_val = max(y_actual_valid.max(), y_pred_valid.max())
+                fig_formula.add_trace(
+                    go.Scatter(
+                        x=[min_val, max_val],
+                        y=[min_val, max_val],
+                        mode='lines',
+                        name='Perfect Fit',
+                        line=dict(dash='dash', color='red')
+                    )
+                )
+                st.plotly_chart(fig_formula, use_container_width=True)
+            else:
+                st.warning("Could not evaluate formula on data points")
             
             if save_files:
                 formula_text = f"Discovered Formula for {formula_target}\n\n"
@@ -423,6 +439,7 @@ def main():
                     "text/plain"
                 )
             
+            progress_bar.progress(1.0)
             progress_bar.empty()
             status_text.empty()
             
@@ -433,7 +450,7 @@ def main():
             status_text.empty()
         except Exception as e:
             st.error(f"Unexpected error: {str(e)}")
-            logger.error("Formula discovery failed", error=str(e))
+            logger.error("Formula discovery failed", error=str(e), traceback=True)
             progress_bar.empty()
             status_text.empty()
 
