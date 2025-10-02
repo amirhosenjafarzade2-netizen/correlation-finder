@@ -7,13 +7,11 @@ Preserves regime splits if pressure detected.
 
 import pandas as pd
 import numpy as np
-from scipy.stats import spearmanr
-from sklearn.feature_selection import mutual_info_regression
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.inspection import permutation_importance
 from typing import List, Dict, Tuple, Optional
 from config import Config
-from utils import compute_mi_score, compute_mi_matrix, logger, MissingDataError
+from utils import compute_mi_score, compute_mi_matrix, logger, MissingDataError  # Now defined
 
 @memory.cache
 def compute_mi_matrix_cached(df: pd.DataFrame, params: List[str], regime: Optional[str] = None, config: Config | None = None) -> pd.DataFrame:
@@ -29,8 +27,10 @@ def analyze_relationships(
     mi_params: Optional[List[str]] = None
 ) -> Dict[str, any]:
     """Perform relationship analysis; returns dict with matrices, importance, SHAP for viz."""
+    df_classified = df.copy()
     if pressure_col:
-        df = classify_regimes(df, pressure_col, bubble_point)
+        from data import classify_regimes  # Local import
+        df_classified = classify_regimes(df, pressure_col, bubble_point)
 
     mi_params = mi_params or params
     if not all(p in params for p in mi_params):
@@ -39,12 +39,12 @@ def analyze_relationships(
         logger.warning("Large number of MI parameters may be slow", count=len(mi_params))
 
     # Compute correlations and MI
-    corr_matrix = df[params].corr(method='spearman')
+    corr_matrix = df_classified[params].corr(method='spearman')
     logger.info("Computed correlation matrix", shape=corr_matrix.shape)
 
     mi_matrix = pd.DataFrame(np.nan, index=mi_params, columns=mi_params)
     try:
-        mi_matrix = compute_mi_matrix_cached(df, mi_params, config=config)
+        mi_matrix = compute_mi_matrix_cached(df_classified, mi_params, config=config)
     except Exception as e:
         logger.warning("Failed to compute MI matrix", error=str(e))
 
@@ -52,13 +52,13 @@ def analyze_relationships(
     mi_undersaturated = pd.DataFrame(np.nan, index=mi_params, columns=mi_params)
     if pressure_col:
         try:
-            saturated_df = df[df['Regime'] == 'Saturated']
+            saturated_df = df_classified[df_classified['Regime'] == 'Saturated']
             if len(saturated_df) > 0:
                 mi_saturated = compute_mi_matrix_cached(saturated_df, mi_params, regime='saturated', config=config)
         except Exception as e:
             logger.warning("Failed to compute MI saturated matrix", error=str(e))
         try:
-            undersaturated_df = df[df['Regime'] == 'Undersaturated']
+            undersaturated_df = df_classified[df_classified['Regime'] == 'Undersaturated']
             if len(undersaturated_df) > 0:
                 mi_undersaturated = compute_mi_matrix_cached(undersaturated_df, mi_params, regime='undersaturated', config=config)
         except Exception as e:
@@ -67,14 +67,13 @@ def analyze_relationships(
     # Random Forest importance
     rf_importance: Dict[str, pd.DataFrame] = {}
     shap_values_dict: Dict[str, Tuple[np.ndarray, pd.DataFrame]] = {}
+    rng = np.random.default_rng(config.random_seed)  # Fixed: Direct RNG, no rng_seed import
     for target in params:
-        X = df[params].drop(columns=[target])
-        y = df[target]
+        X = df_classified[params].drop(columns=[target])
+        y = df_classified[target]
         if y.isna().any() or len(X) < config.min_rows:
             logger.warning(f"Skipping RF for {target}: NaNs or insufficient rows")
             continue
-        from utils import rng_seed  # Assume rng from config
-        rng = np.random.default_rng(config.random_seed)
         rf = RandomForestRegressor(n_estimators=100, random_state=rng.integers(0, 2**32), n_jobs=config.n_jobs)
         rf.fit(X, y)
         perm_importance = permutation_importance(rf, X, y, n_repeats=10, random_state=rng.integers(0, 2**32), n_jobs=config.n_jobs)
@@ -84,7 +83,7 @@ def analyze_relationships(
         }).sort_values('Importance', ascending=False)
         if 'shap' in config.visualizations:
             try:
-                from models import compute_shap_values  # Forward ref
+                from models import compute_shap_values
                 shap_values, X_sample = compute_shap_values(rf, X, config.shap_sample_size, config.random_seed)
                 shap_values_dict[target] = (shap_values, X_sample)
             except Exception as e:
@@ -97,7 +96,7 @@ def analyze_relationships(
         'mi_undersaturated': mi_undersaturated,
         'rf_importance': rf_importance,
         'shap_values_dict': shap_values_dict,
-        'df_regime': df if pressure_col else None
+        'df': df_classified  # Added: For viz access
     }
     logger.info("Analysis complete", keys=list(results.keys()))
     return results
