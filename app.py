@@ -1,4 +1,3 @@
-# app.py
 """
 Main Streamlit app: UI, orchestration, display.
 Integrates all modules; handles inputs, runs tasks, shows results.
@@ -11,11 +10,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
 import io
-import subprocess
-import tempfile
-import json
-import os
-from typing import List
 from config import Config, DEFAULT_CONFIG, PRESSURE_COLS
 from data import load_and_preprocess_data, detect_pressure_column, classify_regimes
 from analysis import analyze_relationships
@@ -128,8 +122,7 @@ def main():
     task_options = [
         "1: Relationship Analysis", 
         "2: Target Optimization", 
-        "4: Analysis + Optimization",
-        "5: All Tasks"
+        "3: Analysis + Optimization"
     ]
     task = st.selectbox("Task", task_options)
     save_files = st.checkbox("Save/Download results")
@@ -155,10 +148,10 @@ def main():
     run_analysis = False
     run_opt = False
     
-    if task in [task_options[0], task_options[2], task_options[3]]:
+    if task in [task_options[0], task_options[2]]:
         run_analysis = st.button("Run Analysis")
     
-    if task in [task_options[1], task_options[2], task_options[3]]:
+    if task in [task_options[1], task_options[2]]:
         col_opt1, col_opt2 = st.columns(2)
         with col_opt1:
             optimizer = st.selectbox("Optimizer", ["ga", "bayesian"])
