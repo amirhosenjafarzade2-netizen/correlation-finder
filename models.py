@@ -27,9 +27,9 @@ def build_neural_network(input_dim: int, config: Config) -> Sequential:
     return model
 
 @memory.cache
-def predict_nn(model: Sequential, X_scaled: np.ndarray) -> np.ndarray:
+def predict_nn(model: Sequential, X_scaled: np.ndarray, batch_size: int = 32) -> np.ndarray:  # Added batch_size param
     """Cached neural network prediction."""
-    return model.predict(X_scaled, batch_size=config.batch_size, verbose=0)  # config from import
+    return model.predict(X_scaled, batch_size=batch_size, verbose=0)
 
 def compute_shap_values(
     model, X: pd.DataFrame, sample_size: int, random_seed: int
@@ -38,10 +38,10 @@ def compute_shap_values(
     import shap
     rng = np.random.default_rng(random_seed)
     X_sample = X.sample(n=min(sample_size, len(X)), random_state=rng.integers(0, 2**32))
-    if isinstance(model, RandomForestRegressor):
+    if "RandomForestRegressor" in str(type(model)):
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X_sample.values)
-    elif isinstance(model, Sequential):
+    elif "Sequential" in str(type(model)):
         explainer = shap.DeepExplainer(model, X_sample.values)
         shap_values = explainer.shap_values(X_sample.values)[0]
     else:
