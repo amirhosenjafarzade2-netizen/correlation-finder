@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.inspection import permutation_importance
 from typing import List, Dict, Tuple, Optional
 from config import Config
-from utils import compute_mi_score, compute_mi_matrix, logger, MissingDataError  # Now defined
+from utils import compute_mi_score, compute_mi_matrix, logger, MissingDataError, memory  # Added memory
 
 @memory.cache
 def compute_mi_matrix_cached(df: pd.DataFrame, params: List[str], regime: Optional[str] = None, config: Config | None = None) -> pd.DataFrame:
