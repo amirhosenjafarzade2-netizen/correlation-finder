@@ -3,16 +3,14 @@
 Symbolic Formula Discovery Module.
 Uses symbolic regression to evolve interpretable mathematical formulas from data.
 Supports multiple methods: PySR (recommended for speed/diversity), gplearn (classic GP).
-Customizable operators for exponential, logarithmic, trigonometric, arithmetic, power, etc.
-Integrate into Streamlit app via: formula = discover_formula(df[features], df[target], method="pysr")
 """
 
 import numpy as np
 import pandas as pd
 from typing import List, Optional, Union, Dict
-import sympy as sp  # For equation simplification/evaluation
+import sympy as sp
 
-# Method 1: PySR (GPU-accelerated GP; best for large data/diverse ops)
+# Method 1: PySR
 try:
     from pysr import PySRRegressor
     PYSR_AVAILABLE = True
@@ -20,7 +18,7 @@ except ImportError:
     PYSR_AVAILABLE = False
     print("PySR not available; install with 'pip install pysr' for best performance.")
 
-# Method 2: gplearn (Pure Python GP; reliable fallback)
+# Method 2: gplearn
 try:
     from gplearn.genetic import SymbolicRegressor
     GPLEARN_AVAILABLE = True
@@ -36,10 +34,10 @@ def discover_formula(
     X: Union[pd.DataFrame, np.ndarray],
     y: Union[pd.Series, np.ndarray],
     feature_names: Optional[List[str]] = None,
-    method: str = "pysr",  # "pysr" (best), "gplearn"
-    max_complexity: int = 10,  # Pareto front limit for equation complexity
-    n_iterations: int = 100,  # Search iterations/generations
-    operators: Optional[List[str]] = None,  # Custom ops; default includes all requested
+    method: str = "pysr",
+    max_complexity: int = 10,
+    n_iterations: int = 100,
+    operators: Optional[List[str]] = None,
     target_name: str = "y"
 ) -> Dict[str, any]:
     """
@@ -48,20 +46,17 @@ def discover_formula(
     Args:
         X: Features (n_samples, n_features).
         y: Target (n_samples,).
-        feature_names: Column names for symbolic output (e.g., ['Bo', 'Rs']).
-        method: "pysr" (recommended; fast, diverse ops) or "gplearn" (classic GP).
-        max_complexity: Max equation complexity (balance fit/simplicity).
-        n_iterations: Search steps (higher = better but slower).
-        operators: List of unary/binary ops (e.g., ["exp", "log", "sin", "add"]).
-        target_name: Name for target in equation (e.g., "Rs").
+        feature_names: Column names for symbolic output.
+        method: "pysr" or "gplearn".
+        max_complexity: Max equation complexity.
+        n_iterations: Search steps.
+        operators: List of unary/binary ops.
+        target_name: Name for target in equation.
     
     Returns:
-        Dict with 'equation' (SymPy expr), 'str_formula' (readable string),
-        'score' (fit metric, e.g., R²), 'complexity' (op count).
-    
-    Raises:
-        FormulaDiscoveryError: If method unavailable or discovery fails.
+        Dict with 'equation', 'str_formula', 'score', 'complexity'.
     """
+    # Convert inputs
     if isinstance(X, pd.DataFrame):
         feature_names = X.columns.tolist() if feature_names is None else feature_names
         X = X.values
@@ -70,87 +65,119 @@ def discover_formula(
     if feature_names is None:
         feature_names = [f"x{i}" for i in range(X.shape[1])]
     
-    # Default operators: arithmetic, power, exp/log, trig (as requested)
+    # Default operators
     if operators is None:
-        operators = [
-            # Binary
-            "add", "sub", "mul", "div", "pow",
-            # Unary
-            "exp", "log", "sin", "cos", "sqrt", "abs"
-        ]
+        operators = ["add", "sub", "mul", "div", "pow", "exp", "log", "sin", "cos", "sqrt", "abs"]
+    
+    # Validate data
+    if len(X) == 0 or len(y) == 0:
+        raise FormulaDiscoveryError("Empty dataset provided")
+    
+    if np.any(np.isnan(X)) or np.any(np.isnan(y)):
+        raise FormulaDiscoveryError("Data contains NaN values")
     
     if method == "pysr" and PYSR_AVAILABLE:
         try:
-            # PySR: Best for diverse ops; Pareto-optimal equations
+            # PySR implementation
+            binary_ops = [op for op in operators if op in ["add", "sub", "mul", "div", "pow"]]
+            unary_ops = [op for op in operators if op in ["exp", "log", "sin", "cos", "sqrt", "abs", "square"]]
+            
             model = PySRRegressor(
                 niterations=n_iterations,
-                binary_operators=operators[:5],  # Arithmetic/power
-                unary_operators=operators[5:],  # Exp/log/trig
+                binary_operators=binary_ops if binary_ops else ["add", "mul"],
+                unary_operators=unary_ops if unary_ops else ["exp", "log"],
                 maxsize=max_complexity,
-                loss="mse",  # Or "r2" for correlation focus
-                model_selection="pareto"  # Balance fit/complexity
+                loss="loss(x, y) = (x - y)^2",
+                model_selection="best",
+                verbosity=0,
+                progress=False
             )
-            model.fit(X, y)
-            best_eq = model.sympy()[-1]  # Best equation from Pareto front
-            equation = sp.sympify(best_eq)
-            score = model.equations_[-1][2]  # Loss (lower better; convert to R² if needed)
-            complexity = len(sp.preorder_traversal(equation))
-            str_formula = sp.pretty(equation, use_unicode=True)
+            
+            model.fit(X, y, variable_names=feature_names)
+            
+            # Get best equation
+            if hasattr(model, 'sympy') and callable(model.sympy):
+                equation = model.sympy()
+            elif hasattr(model, 'get_best'):
+                best_row = model.get_best()
+                equation = sp.sympify(best_row['equation'])
+            else:
+                raise FormulaDiscoveryError("Could not extract equation from PySR model")
+            
+            # Calculate R² score
+            y_pred = model.predict(X)
+            ss_res = np.sum((y - y_pred) ** 2)
+            ss_tot = np.sum((y - np.mean(y)) ** 2)
+            score = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+            
+            complexity = len(list(sp.preorder_traversal(equation)))
+            
         except Exception as e:
-            raise FormulaDiscoveryError(f"PySR failed: {e}")
+            raise FormulaDiscoveryError(f"PySR failed: {str(e)}")
     
     elif method == "gplearn" and GPLEARN_AVAILABLE:
         try:
-            # gplearn: Customizable GP; good fallback
+            # gplearn implementation
+            function_set = tuple([op for op in operators if op in 
+                                 ("add", "sub", "mul", "div", "log", "sqrt", "sin", "cos")])
+            if not function_set:
+                function_set = ("add", "sub", "mul", "div")
+            
             model = SymbolicRegressor(
-                population_size=5000,  # Larger for diversity
-                generations=n_iterations // 10,  # GP generations
+                population_size=1000,
+                generations=max(20, n_iterations // 10),
                 tournament_size=20,
-                stopping_criteria=0.01,  # Stop if fit improves <1%
+                stopping_criteria=0.01,
                 p_crossover=0.7,
                 p_subtree_mutation=0.1,
                 p_hoist_mutation=0.05,
                 p_point_mutation=0.1,
                 max_samples=0.9,
-                verbose=1,
-                parsimony_coefficient=0.01,  # Penalize complexity
-                function_set=("add", "sub", "mul", "div", "log", "exp", "sin", "cos", "sqrt")  # From operators
+                verbose=0,
+                parsimony_coefficient=0.01,
+                function_set=function_set,
+                random_state=42
             )
+            
             model.fit(X, y)
-            equation_str = model._program[1]  # Raw program string
-            equation = sp.sympify(equation_str.replace("X0", feature_names[0]).replace("X1", feature_names[1]))  # Adapt vars
-            score = model.score(X, y)  # R²
-            complexity = model._program[0]  # Depth as proxy
-            str_formula = sp.pretty(equation, use_unicode=True)
+            
+            # Get program and convert to SymPy
+            program_str = str(model._program)
+            
+            # Replace variable names
+            for i, name in enumerate(feature_names):
+                program_str = program_str.replace(f"X{i}", name)
+            
+            # Parse to SymPy
+            equation = sp.sympify(program_str)
+            
+            # Calculate score
+            score = model.score(X, y)
+            complexity = model._program.length_
+            
         except Exception as e:
-            raise FormulaDiscoveryError(f"gplearn failed: {e}")
+            raise FormulaDiscoveryError(f"gplearn failed: {str(e)}")
     
     else:
-        raise FormulaDiscoveryError(f"Method '{method}' unavailable. Install PySR/gplearn or choose another.")
+        raise FormulaDiscoveryError(
+            f"Method '{method}' unavailable. "
+            f"Available: {', '.join([m for m, avail in [('pysr', PYSR_AVAILABLE), ('gplearn', GPLEARN_AVAILABLE)] if avail])}"
+        )
     
-    # Simplify with SymPy (common to both)
-    equation = sp.simplify(equation)
-    str_formula = str(equation).replace("x0", feature_names[0]).replace("x1", feature_names[1])  # Adapt for multi-var
+    # Simplify equation
+    try:
+        equation = sp.simplify(equation)
+    except:
+        pass  # Keep original if simplification fails
+    
+    # Create readable string
+    str_formula = str(equation)
     
     return {
-        "equation": equation,  # SymPy expr for eval/plot
-        "str_formula": str_formula,  # Readable string
-        "score": score,  # Fit metric
-        "complexity": complexity,
+        "equation": equation,
+        "str_formula": str_formula,
+        "score": float(score),
+        "complexity": int(complexity),
         "feature_names": feature_names,
         "target_name": target_name
     }
-
-# Example usage (for testing/integration)
-if __name__ == "__main__":
-    # Sample data
-    X_sample = pd.DataFrame({
-        'x0': np.random.rand(100),
-        'x1': np.random.rand(100),
-        'x2': np.random.rand(100)
-    })
-    y_sample = np.exp(X_sample['x0']) + np.sin(X_sample['x1']) + X_sample['x2'] + np.random.normal(0, 0.1, 100)
-    
-    formula = discover_formula(X_sample, y_sample, feature_names=['x0', 'x1', 'x2'], method="pysr")
-    print(f"Discovered: {formula['str_formula']}")
-    print(f"Score (R²): {formula['score']:.4f}")
