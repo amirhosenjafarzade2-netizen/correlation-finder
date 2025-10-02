@@ -10,7 +10,7 @@ import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
 import plotly.io as pio
-import io  # For download buffers
+import io
 from typing import List
 from config import Config, DEFAULT_CONFIG, PRESSURE_COLS
 from data import load_and_preprocess_data, detect_pressure_column, classify_regimes
@@ -18,10 +18,11 @@ from analysis import analyze_relationships
 from models import train_neural_network, compute_shap_values, predict_nn
 from optimization import optimize_target
 from visualization import generate_viz_from_analysis
+from formula_discovery import discover_formula, FormulaDiscoveryError, PYSR_AVAILABLE, GPLEARN_AVAILABLE
 from utils import logger, MissingDataError, InvalidPressureError, impute_missing_values
 
 # Configure Plotly for Streamlit
-pio.renderers.default = 'browser'  # Or 'notebook' if needed
+pio.renderers.default = 'browser'
 
 st.set_page_config(page_title="Data Analysis Dashboard", layout="wide")
 
@@ -68,7 +69,7 @@ def _build_config_from_sidebar() -> Config:
 def main():
     st.title("Data Analysis Dashboard")
     
-    config = _build_config_from_sidebar()  # No caching; widgets inside
+    config = _build_config_from_sidebar()
     rng = np.random.default_rng(config.random_seed)
     
     # File upload
@@ -88,7 +89,6 @@ def main():
             # Data preview
             with st.expander("Data Preview"):
                 st.dataframe(df.head())
-                # Simple missing % example
                 missing_df = pd.DataFrame({
                     'Column': params,
                     'Missing %': [df[col].isna().sum() / len(df) * 100 for col in params]
@@ -121,12 +121,18 @@ def main():
     pressure_col = st.session_state.get('pressure_col')
     bubble_point = st.session_state.get('bubble_point', config.bubble_point_default)
     
-    # Task selection
-    task_options = ["1: Relationship Analysis", "2: Target Optimization", "3: Both"]
+    # Task selection - UPDATED WITH FORMULA DISCOVERY
+    task_options = [
+        "1: Relationship Analysis", 
+        "2: Target Optimization", 
+        "3: Formula Discovery",
+        "4: Analysis + Optimization",
+        "5: All Tasks"
+    ]
     task = st.selectbox("Task", task_options)
     save_files = st.checkbox("Save/Download results")
     
-    # ML Method selection with radio and full names (expanded to more methods from original intent)
+    # ML Method selection
     ml_method_options = [
         ("Random Forest Regressor", "rf"),
         ("Neural Network", "nn"),
@@ -143,21 +149,65 @@ def main():
     )
     ml_method = next(opt[1] for opt in ml_method_options if opt[0] == selected_ml)
     
+    # Task-specific controls
     run_analysis = False
     run_opt = False
-    if task == task_options[0] or task == task_options[2]:
+    run_formula = False
+    
+    if task in [task_options[0], task_options[3], task_options[4]]:
         run_analysis = st.button("Run Analysis")
-    if task == task_options[1] or task == task_options[2]:
+    
+    if task in [task_options[1], task_options[3], task_options[4]]:
         col_opt1, col_opt2 = st.columns(2)
         with col_opt1:
             optimizer = st.selectbox("Optimizer", ["ga", "bayesian"])
         with col_opt2:
-            target_name = st.selectbox("Target Parameter", params)
+            target_name = st.selectbox("Target Parameter (Optimization)", params)
         interactive = st.checkbox("Enable Interactive Exploration")
         run_opt = st.button("Run Optimization")
     
+    # Formula Discovery controls
+    if task in [task_options[2], task_options[4]]:
+        st.subheader("Formula Discovery Settings")
+        
+        # Check library availability
+        if not PYSR_AVAILABLE and not GPLEARN_AVAILABLE:
+            st.error("No formula discovery libraries available. Install PySR or gplearn.")
+            return
+        
+        available_methods = []
+        if PYSR_AVAILABLE:
+            available_methods.append("PySR (Recommended)")
+        if GPLEARN_AVAILABLE:
+            available_methods.append("gplearn")
+        
+        formula_method = st.selectbox(
+            "Formula Discovery Method",
+            available_methods
+        )
+        formula_method_key = "pysr" if "PySR" in formula_method else "gplearn"
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            formula_features = st.multiselect(
+                "Feature Variables",
+                params,
+                default=params[:min(3, len(params))]
+            )
+        with col_f2:
+            formula_target = st.selectbox("Target Variable (Formula)", params)
+        
+        col_f3, col_f4 = st.columns(2)
+        with col_f3:
+            max_complexity = st.slider("Max Formula Complexity", 5, 20, 10)
+        with col_f4:
+            n_iterations = st.slider("Search Iterations", 50, 500, 100)
+        
+        run_formula = st.button("Discover Formula")
+    
     all_figures = []
     
+    # Run Analysis
     if run_analysis:
         progress_bar = st.progress(0)
         status_text = st.empty()
@@ -177,14 +227,12 @@ def main():
             progress_bar.progress(1.0)
             all_figures.extend(figs)
             
-            # Display figs with unique keys to avoid duplicate ID
             for i, fig in enumerate(figs):
                 if isinstance(fig, go.Figure):
                     st.plotly_chart(fig, use_container_width=True, key=f"analysis_plotly_{i}")
                 else:
                     st.pyplot(fig)
             
-            # Downloads if save_files (adapted from original formulas)
             if save_files:
                 csv_buffer = io.StringIO()
                 results['corr_matrix'].to_csv(csv_buffer, index=True)
@@ -194,7 +242,6 @@ def main():
                     "correlation_matrix.csv",
                     "text/csv"
                 )
-                # Similar for MI matrices, RF importance (as in original)
             
             st.success("Analysis complete!")
             progress_bar.empty()
@@ -206,16 +253,13 @@ def main():
             progress_bar.empty()
             status_text.empty()
     
+    # Run Optimization
     if run_opt:
         progress_bar = st.progress(0)
         status_text = st.empty()
         try:
             status_text.text("Training surrogate model...")
             optimal_df, opt_figs, shap_data = optimize_target(df, params, target_name, config, optimizer, ml_method=ml_method)
-            progress_bar.progress(0.4)
-            
-            status_text.text("Running optimization...")
-            # Progress updated in optimize_target_ga/bayesian via st.progress calls in loops
             progress_bar.progress(0.8)
             
             all_figures.extend(opt_figs)
@@ -237,7 +281,6 @@ def main():
                 )
             
             if interactive:
-                # Interactive sliders (replaces ipywidgets, as in original)
                 st.subheader("Interactive Parameter Exploration")
                 features = [p for p in params if p != target_name]
                 model, scaler = train_neural_network(df[features], df[target_name], config)
@@ -255,7 +298,6 @@ def main():
                 pred = predict_nn(model, X_test_scaled, config.batch_size)[0][0]
                 st.metric(f"Predicted {target_name}", pred)
                 
-                # Simple sensitivity plot (fixed from original bug)
                 selected_feat = st.selectbox("Sensitivity to", features)
                 feat_range = np.linspace(df[selected_feat].min(), df[selected_feat].max(), 50)
                 sens_preds = []
@@ -275,6 +317,123 @@ def main():
         except Exception as e:
             st.error(f"Optimization error: {str(e)}")
             logger.error("Optimization failed", error=str(e))
+            progress_bar.empty()
+            status_text.empty()
+    
+    # Run Formula Discovery
+    if run_formula:
+        if not formula_features or formula_target not in params:
+            st.error("Please select valid features and target for formula discovery.")
+            return
+        
+        if formula_target in formula_features:
+            st.error("Target cannot be in features list.")
+            return
+        
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        try:
+            status_text.text(f"Discovering formula using {formula_method_key}...")
+            progress_bar.progress(0.2)
+            
+            X_formula = df[formula_features]
+            y_formula = df[formula_target]
+            
+            # Remove NaNs
+            mask = ~(X_formula.isna().any(axis=1) | y_formula.isna())
+            X_formula = X_formula[mask]
+            y_formula = y_formula[mask]
+            
+            if len(X_formula) < config.min_rows:
+                st.error(f"Insufficient data after removing NaNs: {len(X_formula)} rows")
+                progress_bar.empty()
+                status_text.empty()
+                return
+            
+            progress_bar.progress(0.4)
+            
+            formula_result = discover_formula(
+                X_formula,
+                y_formula,
+                feature_names=formula_features,
+                method=formula_method_key,
+                max_complexity=max_complexity,
+                n_iterations=n_iterations,
+                target_name=formula_target
+            )
+            
+            progress_bar.progress(1.0)
+            
+            st.success("Formula discovery complete!")
+            st.subheader("Discovered Formula")
+            
+            col_res1, col_res2 = st.columns(2)
+            with col_res1:
+                st.metric("Fit Score (R²)", f"{formula_result['score']:.4f}")
+            with col_res2:
+                st.metric("Complexity", formula_result['complexity'])
+            
+            st.code(formula_result['str_formula'], language='text')
+            
+            # Evaluation plot
+            import sympy as sp
+            equation = formula_result['equation']
+            y_pred = []
+            for _, row in X_formula.iterrows():
+                val_dict = {sp.Symbol(f): row[f] for f in formula_features}
+                try:
+                    pred_val = float(equation.subs(val_dict))
+                    y_pred.append(pred_val)
+                except:
+                    y_pred.append(np.nan)
+            
+            y_pred = np.array(y_pred)
+            mask_valid = ~np.isnan(y_pred)
+            
+            fig_formula = px.scatter(
+                x=y_formula[mask_valid],
+                y=y_pred[mask_valid],
+                labels={'x': f'Actual {formula_target}', 'y': f'Predicted {formula_target}'},
+                title='Formula Predictions vs Actual'
+            )
+            fig_formula.add_trace(
+                go.Scatter(
+                    x=[y_formula[mask_valid].min(), y_formula[mask_valid].max()],
+                    y=[y_formula[mask_valid].min(), y_formula[mask_valid].max()],
+                    mode='lines',
+                    name='Perfect Fit',
+                    line=dict(dash='dash', color='red')
+                )
+            )
+            st.plotly_chart(fig_formula, use_container_width=True)
+            
+            if save_files:
+                formula_text = f"Discovered Formula for {formula_target}\n\n"
+                formula_text += f"Method: {formula_method_key}\n"
+                formula_text += f"Features: {', '.join(formula_features)}\n"
+                formula_text += f"Score (R²): {formula_result['score']:.4f}\n"
+                formula_text += f"Complexity: {formula_result['complexity']}\n\n"
+                formula_text += f"Formula:\n{formula_result['str_formula']}\n"
+                
+                st.download_button(
+                    "Download Formula",
+                    formula_text,
+                    f"formula_{formula_target}.txt",
+                    "text/plain"
+                )
+            
+            progress_bar.empty()
+            status_text.empty()
+            
+        except FormulaDiscoveryError as e:
+            st.error(f"Formula discovery error: {str(e)}")
+            logger.error("Formula discovery failed", error=str(e))
+            progress_bar.empty()
+            status_text.empty()
+        except Exception as e:
+            st.error(f"Unexpected error: {str(e)}")
+            logger.error("Formula discovery failed", error=str(e))
             progress_bar.empty()
             status_text.empty()
 
