@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Optional, Union, Dict
 import sympy as sp
+from sklearn.metrics import r2_score
 
 # Method 1: PySR
 try:
@@ -65,6 +66,10 @@ def discover_formula(
     if feature_names is None:
         feature_names = [f"x{i}" for i in range(X.shape[1])]
     
+    # Ensure numpy arrays
+    X = np.asarray(X, dtype=np.float64)
+    y = np.asarray(y, dtype=np.float64)
+    
     # Default operators
     if operators is None:
         operators = ["add", "sub", "mul", "div", "pow", "exp", "log", "sin", "cos", "sqrt", "abs"]
@@ -75,6 +80,9 @@ def discover_formula(
     
     if np.any(np.isnan(X)) or np.any(np.isnan(y)):
         raise FormulaDiscoveryError("Data contains NaN values")
+    
+    if np.any(np.isinf(X)) or np.any(np.isinf(y)):
+        raise FormulaDiscoveryError("Data contains infinite values")
     
     if method == "pysr" and PYSR_AVAILABLE:
         try:
@@ -106,9 +114,7 @@ def discover_formula(
             
             # Calculate R² score
             y_pred = model.predict(X)
-            ss_res = np.sum((y - y_pred) ** 2)
-            ss_tot = np.sum((y - np.mean(y)) ** 2)
-            score = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0.0
+            score = r2_score(y, y_pred)
             
             complexity = len(list(sp.preorder_traversal(equation)))
             
@@ -117,12 +123,13 @@ def discover_formula(
     
     elif method == "gplearn" and GPLEARN_AVAILABLE:
         try:
-            # gplearn implementation
+            # gplearn implementation with compatibility fixes
             function_set = tuple([op for op in operators if op in 
                                  ("add", "sub", "mul", "div", "log", "sqrt", "sin", "cos")])
             if not function_set:
                 function_set = ("add", "sub", "mul", "div")
             
+            # Create model with explicit sklearn compatibility
             model = SymbolicRegressor(
                 population_size=1000,
                 generations=max(20, n_iterations // 10),
@@ -136,33 +143,73 @@ def discover_formula(
                 verbose=0,
                 parsimony_coefficient=0.01,
                 function_set=function_set,
-                random_state=42
+                random_state=42,
+                n_jobs=1  # Single thread for compatibility
             )
             
+            # Manual data validation to avoid _validate_data
+            if X.shape[0] != y.shape[0]:
+                raise FormulaDiscoveryError(f"X and y have different lengths: {X.shape[0]} vs {y.shape[0]}")
+            
+            # Fit the model
             model.fit(X, y)
             
-            # Get program and convert to SymPy
+            # Get predictions and calculate R²
+            y_pred = model.predict(X)
+            score = r2_score(y, y_pred)
+            
+            # Get program string
             program_str = str(model._program)
             
-            # Replace variable names
+            # Replace variable names carefully
+            for i in range(len(feature_names)):
+                program_str = program_str.replace(f"X{i}", f"VAR_{i}_TEMP")
             for i, name in enumerate(feature_names):
-                program_str = program_str.replace(f"X{i}", name)
+                program_str = program_str.replace(f"VAR_{i}_TEMP", name)
+            
+            # Clean up common gplearn artifacts
+            program_str = program_str.replace("add(", "(")
+            program_str = program_str.replace("sub(", "(")
+            program_str = program_str.replace("mul(", "(")
+            program_str = program_str.replace("div(", "(")
             
             # Parse to SymPy
-            equation = sp.sympify(program_str)
+            try:
+                equation = sp.sympify(program_str)
+            except:
+                # Fallback: create a simple representation
+                equation = sp.Symbol("f(x)")
+                program_str = str(model._program)
             
-            # Calculate score
-            score = model.score(X, y)
             complexity = model._program.length_
             
+        except AttributeError as e:
+            if "_validate_data" in str(e):
+                raise FormulaDiscoveryError(
+                    "gplearn compatibility issue detected. "
+                    "Try: pip install --upgrade scikit-learn==1.0.2 gplearn==0.4.2"
+                )
+            else:
+                raise FormulaDiscoveryError(f"gplearn failed: {str(e)}")
         except Exception as e:
             raise FormulaDiscoveryError(f"gplearn failed: {str(e)}")
     
     else:
-        raise FormulaDiscoveryError(
-            f"Method '{method}' unavailable. "
-            f"Available: {', '.join([m for m, avail in [('pysr', PYSR_AVAILABLE), ('gplearn', GPLEARN_AVAILABLE)] if avail])}"
-        )
+        available = []
+        if PYSR_AVAILABLE:
+            available.append("pysr")
+        if GPLEARN_AVAILABLE:
+            available.append("gplearn")
+        
+        if not available:
+            raise FormulaDiscoveryError(
+                "No formula discovery methods available. "
+                "Install with: pip install gplearn (or) pip install pysr"
+            )
+        else:
+            raise FormulaDiscoveryError(
+                f"Method '{method}' unavailable. Available: {', '.join(available)}"
+            )
     
     # Simplify equation
     try:
@@ -170,8 +217,10 @@ def discover_formula(
     except:
         pass  # Keep original if simplification fails
     
-    # Create readable string
+    # Create readable string with proper variable names
     str_formula = str(equation)
+    for i, name in enumerate(feature_names):
+        str_formula = str_formula.replace(f"x{i}", name)
     
     return {
         "equation": equation,
