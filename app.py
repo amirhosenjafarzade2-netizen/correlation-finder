@@ -1,4 +1,4 @@
-# app.py
+this is app.py you add that part : # app.py
 """
 Main Streamlit app: UI, orchestration, display.
 Integrates all modules; handles inputs, runs tasks, shows results.
@@ -122,7 +122,7 @@ def main():
     bubble_point = st.session_state.get('bubble_point', config.bubble_point_default)
     
     # Task selection
-    task_options = ["1: Relationship Analysis", "2: Target Optimization", "3: Formula Discovery", "4: Both Analysis & Optimization"]
+    task_options = ["1: Relationship Analysis", "2: Target Optimization", "3: Both"]
     task = st.selectbox("Task", task_options)
     save_files = st.checkbox("Save/Download results")
     
@@ -145,10 +145,9 @@ def main():
     
     run_analysis = False
     run_opt = False
-    run_formula = False
-    if task == task_options[0] or task == task_options[3]:
+    if task == task_options[0] or task == task_options[2]:
         run_analysis = st.button("Run Analysis")
-    if task == task_options[1] or task == task_options[3]:
+    if task == task_options[1] or task == task_options[2]:
         col_opt1, col_opt2 = st.columns(2)
         with col_opt1:
             optimizer = st.selectbox("Optimizer", ["ga", "bayesian"])
@@ -156,9 +155,6 @@ def main():
             target_name = st.selectbox("Target Parameter", params)
         interactive = st.checkbox("Enable Interactive Exploration")
         run_opt = st.button("Run Optimization")
-    if task == task_options[2]:
-        target_name = st.selectbox("Target Parameter for Formula", params)
-        run_formula = st.button("Discover Symbolic Formula")
     
     all_figures = []
     
@@ -209,65 +205,6 @@ def main():
             logger.error("Analysis failed", error=str(e))
             progress_bar.empty()
             status_text.empty()
-    
-    if run_formula:
-        st.markdown("---")
-        st.subheader("🔬 Symbolic Formula Discovery")
-        formula_progress = st.progress(0)
-        formula_status = st.empty()
-        try:
-            formula_status.text("Discovering symbolic formula...")
-            from formula_discovery import discover_formula
-            
-            features = [p for p in params if p != target_name]
-            formula_progress.progress(0.3)
-            
-            formula = discover_formula(
-                df[features], 
-                df[target_name], 
-                features, 
-                method=ml_method, 
-                target_name=target_name
-            )
-            formula_progress.progress(0.9)
-            
-            # Display results
-            st.success("Formula discovered successfully!")
-            
-            col1, col2 = st.columns([2, 1])
-            with col1:
-                st.markdown("**Discovered Formula:**")
-                st.latex(formula['str_formula'])
-            with col2:
-                st.metric("Model Fit (R²)", f"{formula['score']:.4f}")
-            
-            # Additional formula info if available
-            if 'complexity' in formula:
-                st.info(f"Formula Complexity: {formula['complexity']}")
-            
-            # Option to save formula
-            if save_files:
-                formula_text = f"Target: {target_name}\n\nFormula:\n{formula['str_formula']}\n\nR² Score: {formula['score']:.4f}"
-                st.download_button(
-                    "Download Formula",
-                    formula_text,
-                    f"formula_{target_name}.txt",
-                    "text/plain"
-                )
-            
-            formula_progress.progress(1.0)
-            formula_progress.empty()
-            formula_status.empty()
-            
-        except ImportError:
-            st.error("Formula discovery module not found. Please ensure 'formula_discovery.py' is in your project directory.")
-            formula_progress.empty()
-            formula_status.empty()
-        except Exception as e:
-            st.error(f"Formula discovery error: {str(e)}")
-            logger.error("Formula discovery failed", error=str(e))
-            formula_progress.empty()
-            formula_status.empty()
     
     if run_opt:
         progress_bar = st.progress(0)
