@@ -1,4 +1,4 @@
-this is app.py you add that part : # app.py
+# app.py
 """
 Main Streamlit app: UI, orchestration, display.
 Integrates all modules; handles inputs, runs tasks, shows results.
