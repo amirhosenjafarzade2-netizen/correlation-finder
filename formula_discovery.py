@@ -3,6 +3,7 @@
 Symbolic Formula Discovery Module.
 Uses symbolic regression to evolve interpretable mathematical formulas from data.
 Supports multiple methods: PySR (recommended for speed/diversity), gplearn (classic GP).
+Fixed for scikit-learn compatibility issues in gplearn.
 """
 
 import numpy as np
@@ -11,7 +12,7 @@ from typing import List, Optional, Union, Dict
 import sympy as sp
 from sklearn.metrics import r2_score
 
-# Method 1: PySR
+# Method 1: PySR (preferred)
 try:
     from pysr import PySRRegressor
     PYSR_AVAILABLE = True
@@ -19,13 +20,29 @@ except ImportError:
     PYSR_AVAILABLE = False
     print("PySR not available; install with 'pip install pysr' for best performance.")
 
-# Method 2: gplearn
-try:
-    from gplearn.genetic import SymbolicRegressor
-    GPLEARN_AVAILABLE = True
-except ImportError:
-    GPLEARN_AVAILABLE = False
-    print("gplearn not available; install with 'pip install gplearn'.")
+# Method 2: gplearn (with compatibility patch for scikit-learn >=1.2)
+GPLEARN_AVAILABLE = False
+if not PYSR_AVAILABLE:
+    try:
+        # Monkey-patch for scikit-learn >=1.2 compatibility
+        # Issue: _validate_data returns tuple (X,) when y=None, but gplearn expects X
+        from sklearn.utils.validation import _validate_data as original_validate_data
+        def patched_validate_data(X, y=None, **kwargs):
+            result = original_validate_data(X, y=y, **kwargs)
+            if y is None and isinstance(result, tuple) and len(result) == 1:
+                return result[0]  # Unpack for old API
+            return result
+        import sklearn.utils.validation as skval
+        skval._validate_data = patched_validate_data
+
+        from gplearn.genetic import SymbolicRegressor
+        GPLEARN_AVAILABLE = True
+    except ImportError:
+        GPLEARN_AVAILABLE = False
+        print("gplearn not available; install with 'pip install gplearn==0.4.2'.")
+    except Exception as e:
+        print(f"gplearn import failed with patch: {e}")
+        GPLEARN_AVAILABLE = False
 
 class FormulaDiscoveryError(Exception):
     """Raised when formula discovery fails."""
@@ -35,7 +52,7 @@ def discover_formula(
     X: Union[pd.DataFrame, np.ndarray],
     y: Union[pd.Series, np.ndarray],
     feature_names: Optional[List[str]] = None,
-    method: str = "pysr",
+    method: str = "pysr",  # Default to PySR
     max_complexity: int = 10,
     n_iterations: int = 100,
     operators: Optional[List[str]] = None,
@@ -186,8 +203,8 @@ def discover_formula(
         except AttributeError as e:
             if "_validate_data" in str(e):
                 raise FormulaDiscoveryError(
-                    "gplearn compatibility issue detected. "
-                    "Try: pip install --upgrade scikit-learn==1.0.2 gplearn==0.4.2"
+                    "gplearn compatibility issue detected despite patch. "
+                    "Consider using PySR or isolating environments."
                 )
             else:
                 raise FormulaDiscoveryError(f"gplearn failed: {str(e)}")
@@ -204,7 +221,7 @@ def discover_formula(
         if not available:
             raise FormulaDiscoveryError(
                 "No formula discovery methods available. "
-                "Install with: pip install gplearn (or) pip install pysr"
+                "Install with: pip install gplearn==0.4.2 (or) pip install pysr"
             )
         else:
             raise FormulaDiscoveryError(
