@@ -20,11 +20,6 @@ scikit-optimize>=0.9.0
 shap>=0.41.0
 streamlit>=1.28.0
 
-# For formula discovery (gplearn only; no Julia deps)
-gplearn>=0.4.2
-sympy>=1.12.0
-pysr>=0.18.0  # <-- ADD THIS LINE
-
 # Optional: For local dev/testing
 # jupyter (if running in notebook)
 # ipywidgets>=8.0.0  # Removed as not used in Streamlit
