@@ -12,6 +12,10 @@ import plotly.graph_objects as go
 import plotly.io as pio
 import io
 import sympy as sp
+import subprocess
+import tempfile
+import json
+import os
 from typing import List
 from config import Config, DEFAULT_CONFIG, PRESSURE_COLS
 from data import load_and_preprocess_data, detect_pressure_column, classify_regimes
