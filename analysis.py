@@ -6,11 +6,13 @@ Preserves regime splits if pressure detected.
 Supports multiple ML methods (rf, nn, lr, svm) for importance.
 """
 
+import streamlit as st  # For progress bars
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.svm import SVR
+from sklearn.tree import DecisionTreeRegressor
 from sklearn.inspection import permutation_importance
 from typing import List, Dict, Tuple, Optional
 from config import Config
@@ -85,7 +87,9 @@ def analyze_relationships(
         "rf": RandomForestRegressor,
         "nn": None,  # NN not for importance here; use RF as fallback or skip
         "lr": LinearRegression,
-        "svm": SVR
+        "svm": SVR,
+        "dt": DecisionTreeRegressor,
+        "ridge": lambda: LinearRegression(fit_intercept=True, positive=False)  # Ridge via alpha param if needed
     }.get(ml_method, RandomForestRegressor)
     
     # Random Forest/Alternative importance
@@ -105,13 +109,14 @@ def analyze_relationships(
             continue
         if ml_method == "nn":
             # For NN, train per target (adapted from original opt NN)
-            model = train_neural_network(X, y, config)[0]  # Use trained NN
+            model, _ = train_neural_network(X, y, config)  # Use trained NN
             # Importance from weights (original formula)
             weights = model.layers[0].get_weights()[0]
             perm_importance = np.mean(np.abs(weights), axis=1)  # Original mean abs weights
         else:
             model = model_class(n_jobs=config.n_jobs if hasattr(model_class, 'n_jobs') else None)
-            model.random_state = rng.integers(0, 2**32) if hasattr(model, 'random_state') else None
+            if hasattr(model, 'random_state'):
+                model.random_state = rng.integers(0, 2**32)
             model.fit(X, y)
             perm_importance = permutation_importance(model, X, y, n_repeats=10, random_state=rng.integers(0, 2**32), n_jobs=config.n_jobs)
             perm_importance = perm_importance.importances_mean
