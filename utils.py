@@ -11,6 +11,7 @@ from joblib import Memory
 from typing import List
 from tensorflow.keras.callbacks import EarlyStopping
 from rich.progress import Progress, TextColumn, BarColumn, TimeRemainingColumn  # For non-Streamlit; adapt in app
+from sklearn.feature_selection import mutual_info_regression  # Added for MI
 
 # Suppress TensorFlow warnings for SHAP
 warnings.filterwarnings("ignore", category=UserWarning, module="shap.explainers._deep.deep_tf")
@@ -106,3 +107,53 @@ def impute_missing_values(df: pd.DataFrame, columns: List[str]) -> pd.DataFrame:
     df = df[valid_columns]
     logger.info("Imputed missing values", valid_columns=valid_columns)
     return df
+
+def compute_mi_score(param1: str, param2: str, df: pd.DataFrame, random_seed: int = 42) -> float:
+    """Compute mutual information score for a parameter pair."""
+    if param1 == param2:
+        return 1.0
+    X = df[[param1]].fillna(df[param1].median()).values  # Shape: (n_samples, 1)
+    y = df[param2].fillna(df[param2].median()).values.ravel()  # Shape: (n_samples,)
+    if np.any(np.isnan(X)) or np.any(np.isnan(y)):
+        logger.error(f"NaN values detected in {param1} or {param2}")
+        raise ValueError(f"Input contains NaN for {param1} or {param2}")
+    rng = np.random.default_rng(random_seed)
+    score = mutual_info_regression(X, y, random_state=rng.integers(0, 2**32))[0]
+    logger.debug("Computed MI score", param1=param1, param2=param2, score=score)
+    return score
+
+def compute_mi_matrix(df: pd.DataFrame, params: List[str], regime: str | None = None, config=None) -> pd.DataFrame:
+    """Compute mutual information matrix sequentially."""
+    if config is None:
+        class DummyConfig:
+            min_rows = 10
+            random_seed = 42
+        config = DummyConfig()
+    if len(df) < config.min_rows:
+        logger.warning(f"Dataset has {len(df)} rows, minimum is {config.min_rows}, returning empty matrix")
+        return pd.DataFrame(np.nan, index=params, columns=params)
+    
+    mi_matrix = np.zeros((len(params), len(params)))
+    param_pairs = [(i, j, params[i], params[j]) for i in range(len(params)) for j in range(i, len(params))]
+    failed_pairs = []
+    
+    # Simplified progress (no rich; use st.progress in app)
+    for i, j, param1, param2 in param_pairs:
+        try:
+            score = compute_mi_score(param1, param2, df, config.random_seed)
+            mi_matrix[i, j] = score
+            mi_matrix[j, i] = score
+        except ValueError as e:
+            logger.error("MI computation failed", param1=param1, param2=param2, error=str(e))
+            failed_pairs.append((param1, param2))
+            mi_matrix[i, j] = 0.0
+            mi_matrix[j, i] = 0.0
+    
+    mi_matrix = pd.DataFrame(mi_matrix, index=params, columns=params)
+    max_score = mi_matrix.max().max()
+    if max_score > 0:
+        mi_matrix = mi_matrix / max_score
+    else:
+        logger.warning(f"MI matrix ({regime or 'all'}) has max score 0, skipping normalization")
+    logger.info("Computed MI matrix", regime=regime or "all", shape=mi_matrix.shape)
+    return mi_matrix
