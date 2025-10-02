@@ -115,7 +115,6 @@ def discover_formula(
             n_jobs=1,
             const_range=(-1.0, 1.0),
             init_depth=(2, 6),
-            function_probabilities=None,
             metric="spearman"  # Use Spearman for robustness
         )
         
