@@ -9,7 +9,7 @@ Preserves all graph types.
 import matplotlib.pyplot as plt
 import plotly.express as px
 import plotly.graph_objects as go
-from typing import List, Dict, Any  # Added Any
+from typing import List, Dict, Any  # Ensure Dict is imported
 import pandas as pd
 import numpy as np
 import seaborn as sns
