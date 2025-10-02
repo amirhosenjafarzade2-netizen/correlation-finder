@@ -1,32 +1,20 @@
-# Core data/science (lightweight, wheel-friendly)
-numpy==1.24.4  # Downgraded for sklearn compat; avoids dtype errors
-pandas==2.1.4
-matplotlib==3.8.2
-seaborn==0.13.0
-plotly==5.17.0
-scipy==1.11.4
-
-# ML basics (no tensorflow)
-scikit-learn==1.3.2  # Compatible with gplearn; latest stable for 2025 cloud
+# requirements.txt
+numpy==1.26.4  # Supports Python 3.13, no distutils
+pandas==2.2.2
+matplotlib==3.9.2
+seaborn==0.13.2
+plotly==5.22.0
+scipy==1.14.1
+scikit-learn==1.3.2  # Compatible with gplearn==0.4.2
 joblib==1.3.2
-
-# Interpretability
-shap==0.42.1  # Downgraded; avoids conflicts
-
-# Optimization/GA
-deap==1.3.2
-scikit-optimize==0.9.0
-
-# UI/Logging
-streamlit==1.32.0  # Omit if not pinning; Streamlit auto-installs latest
-rich==13.6.0
-structlog==23.2.0
-pydantic==2.5.0
-
-# Excel/IO
-openpyxl==3.1.2
-
-# Formula Discovery (fallback to no gplearn; use PySR local)
-sympy==1.12
-# gplearn==0.4.2  # Commented: Causes _validate_data error; remove for cloud
-# pysr==0.18.0    # Local only: Requires Julia (uncomment + install locally)
+shap==0.42.1
+deap==1.4.1
+scikit-optimize==0.10.2
+streamlit==1.38.0
+rich==13.8.1
+structlog==24.4.0
+pydantic==2.9.1
+openpyxl==3.1.5
+gplearn==0.4.2
+sympy==1.13.3
+# pysr==0.18.0  # Uncomment for local use only
