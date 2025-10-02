@@ -2,8 +2,8 @@
 """
 Symbolic Formula Discovery Module.
 Uses symbolic regression to evolve interpretable mathematical formulas from data.
-Supports multiple methods: PySR (recommended for speed/diversity), gplearn (classic GP).
-Fixed for scikit-learn compatibility issues in gplearn and Streamlit Cloud permissions.
+Supports gplearn (primary for Streamlit Cloud compatibility).
+PySR disabled due to permission issues on Cloud.
 """
 
 import numpy as np
@@ -12,38 +12,16 @@ from typing import List, Optional, Union, Dict
 import sympy as sp
 from sklearn.metrics import r2_score
 
-# Method 1: PySR (preferred, but skip on permission-restricted envs like Streamlit Cloud)
+# Skip PySR due to Julia permission errors on Streamlit Cloud
 PYSR_AVAILABLE = False
-try:
-    from pysr import PySRRegressor
-    PYSR_AVAILABLE = True
-except (ImportError, PermissionError, OSError) as e:
-    # Catch permission issues during Julia setup (common on Streamlit Cloud)
-    print(f"PySR import failed (likely permissions): {e}. Falling back to gplearn.")
-    PYSR_AVAILABLE = False
 
-# Method 2: gplearn (with compatibility patch for scikit-learn >=1.2)
+# gplearn (works with sklearn 1.1.x)
 GPLEARN_AVAILABLE = False
 try:
-    # Monkey-patch for scikit-learn >=1.2 compatibility
-    # Issue: _validate_data returns tuple (X,) when y=None, but gplearn expects X
-    from sklearn.utils.validation import _validate_data as original_validate_data
-    def patched_validate_data(X, y=None, **kwargs):
-        result = original_validate_data(X, y=y, **kwargs)
-        if y is None and isinstance(result, tuple) and len(result) == 1:
-            return result[0]  # Unpack for old API
-        return result
-    import sklearn.utils.validation as skval
-    skval._validate_data = patched_validate_data
-
     from gplearn.genetic import SymbolicRegressor
     GPLEARN_AVAILABLE = True
 except ImportError:
     print("gplearn not available; install with 'pip install gplearn==0.4.2'.")
-    GPLEARN_AVAILABLE = False
-except Exception as e:
-    print(f"gplearn import failed with patch: {e}")
-    GPLEARN_AVAILABLE = False
 
 class FormulaDiscoveryError(Exception):
     """Raised when formula discovery fails."""
@@ -53,20 +31,20 @@ def discover_formula(
     X: Union[pd.DataFrame, np.ndarray],
     y: Union[pd.Series, np.ndarray],
     feature_names: Optional[List[str]] = None,
-    method: str = "gplearn",  # Default to gplearn for cloud compatibility
+    method: str = "gplearn",  # Only gplearn supported
     max_complexity: int = 10,
     n_iterations: int = 100,
     operators: Optional[List[str]] = None,
     target_name: str = "y"
 ) -> Dict[str, any]:
     """
-    Discover a symbolic formula using the selected method.
+    Discover a symbolic formula using gplearn.
     
     Args:
         X: Features (n_samples, n_features).
         y: Target (n_samples,).
         feature_names: Column names for symbolic output.
-        method: "pysr" or "gplearn".
+        method: Must be "gplearn".
         max_complexity: Max equation complexity.
         n_iterations: Search steps.
         operators: List of unary/binary ops.
@@ -75,6 +53,14 @@ def discover_formula(
     Returns:
         Dict with 'equation', 'str_formula', 'score', 'complexity'.
     """
+    if method != "gplearn":
+        raise FormulaDiscoveryError(f"Method '{method}' not supported. Use 'gplearn'.")
+
+    if not GPLEARN_AVAILABLE:
+        raise FormulaDiscoveryError(
+            "gplearn not available. Add 'gplearn==0.4.2' to requirements.txt and pin 'scikit-learn==1.1.3'."
+        )
+
     # Convert inputs
     if isinstance(X, pd.DataFrame):
         feature_names = X.columns.tolist() if feature_names is None else feature_names
@@ -90,7 +76,7 @@ def discover_formula(
     
     # Default operators
     if operators is None:
-        operators = ["add", "sub", "mul", "div", "pow", "exp", "log", "sin", "cos", "sqrt", "abs"]
+        operators = ["add", "sub", "mul", "div", "log", "sqrt", "sin", "cos"]
     
     # Validate data
     if len(X) == 0 or len(y) == 0:
@@ -101,141 +87,74 @@ def discover_formula(
     
     if np.any(np.isinf(X)) or np.any(np.isinf(y)):
         raise FormulaDiscoveryError("Data contains infinite values")
-    
-    if method == "pysr" and PYSR_AVAILABLE:
-        try:
-            # PySR implementation
-            binary_ops = [op for op in operators if op in ["add", "sub", "mul", "div", "pow"]]
-            unary_ops = [op for op in operators if op in ["exp", "log", "sin", "cos", "sqrt", "abs", "square"]]
-            
-            model = PySRRegressor(
-                niterations=n_iterations,
-                binary_operators=binary_ops if binary_ops else ["add", "mul"],
-                unary_operators=unary_ops if unary_ops else ["exp", "log"],
-                maxsize=max_complexity,
-                loss="loss(x, y) = (x - y)^2",
-                model_selection="best",
-                verbosity=0,
-                progress=False
-            )
-            
-            model.fit(X, y, variable_names=feature_names)
-            
-            # Get best equation
-            if hasattr(model, 'sympy') and callable(model.sympy):
-                equation = model.sympy()
-            elif hasattr(model, 'get_best'):
-                best_row = model.get_best()
-                equation = sp.sympify(best_row['equation'])
-            else:
-                raise FormulaDiscoveryError("Could not extract equation from PySR model")
-            
-            # Calculate R² score
-            y_pred = model.predict(X)
-            score = r2_score(y, y_pred)
-            
-            complexity = len(list(sp.preorder_traversal(equation)))
-            
-        except Exception as e:
-            raise FormulaDiscoveryError(f"PySR failed: {str(e)}")
-    
-    elif method == "gplearn" and GPLEARN_AVAILABLE:
-        try:
-            # gplearn implementation with compatibility fixes
-            function_set = tuple([op for op in operators if op in 
-                                 ("add", "sub", "mul", "div", "log", "sqrt", "sin", "cos")])
-            if not function_set:
-                function_set = ("add", "sub", "mul", "div")
-            
-            # Create model with explicit sklearn compatibility
-            model = SymbolicRegressor(
-                population_size=1000,
-                generations=max(20, n_iterations // 10),
-                tournament_size=20,
-                stopping_criteria=0.01,
-                p_crossover=0.7,
-                p_subtree_mutation=0.1,
-                p_hoist_mutation=0.05,
-                p_point_mutation=0.1,
-                max_samples=0.9,
-                verbose=0,
-                parsimony_coefficient=0.01,
-                function_set=function_set,
-                random_state=42,
-                n_jobs=1  # Single thread for compatibility
-            )
-            
-            # Manual data validation to avoid _validate_data
-            if X.shape[0] != y.shape[0]:
-                raise FormulaDiscoveryError(f"X and y have different lengths: {X.shape[0]} vs {y.shape[0]}")
-            
-            # Fit the model
-            model.fit(X, y)
-            
-            # Get predictions and calculate R²
-            y_pred = model.predict(X)
-            score = r2_score(y, y_pred)
-            
-            # Get program string
-            program_str = str(model._program)
-            
-            # Replace variable names carefully
-            for i in range(len(feature_names)):
-                program_str = program_str.replace(f"X{i}", f"VAR_{i}_TEMP")
-            for i, name in enumerate(feature_names):
-                program_str = program_str.replace(f"VAR_{i}_TEMP", name)
-            
-            # Clean up common gplearn artifacts
-            program_str = program_str.replace("add(", "(")
-            program_str = program_str.replace("sub(", "(")
-            program_str = program_str.replace("mul(", "(")
-            program_str = program_str.replace("div(", "(")
-            
-            # Parse to SymPy
-            try:
-                equation = sp.sympify(program_str)
-            except:
-                # Fallback: create a simple representation
-                equation = sp.Symbol("f(x)")
-                program_str = str(model._program)
-            
-            complexity = model._program.length_
-            
-        except AttributeError as e:
-            if "_validate_data" in str(e):
-                raise FormulaDiscoveryError(
-                    "gplearn compatibility issue detected despite patch. "
-                    "Consider using PySR or isolating environments."
-                )
-            else:
-                raise FormulaDiscoveryError(f"gplearn failed: {str(e)}")
-        except Exception as e:
-            raise FormulaDiscoveryError(f"gplearn failed: {str(e)}")
-    
-    else:
-        available = []
-        if PYSR_AVAILABLE:
-            available.append("pysr")
-        if GPLEARN_AVAILABLE:
-            available.append("gplearn")
+
+    try:
+        # gplearn implementation
+        function_set = tuple([op for op in operators if op in 
+                             ("add", "sub", "mul", "div", "log", "sqrt", "sin", "cos")])
+        if not function_set:
+            function_set = ("add", "sub", "mul", "div")
         
-        if not available:
-            raise FormulaDiscoveryError(
-                "No formula discovery methods available. "
-                "Install with: pip install gplearn==0.4.2 (or) pip install pysr"
-            )
-        else:
-            raise FormulaDiscoveryError(
-                f"Method '{method}' unavailable. Available: {', '.join(available)}"
-            )
+        # Limit generations based on n_iterations for performance
+        generations = min(max(5, n_iterations // 20), 50)  # Cap for Cloud
+        
+        model = SymbolicRegressor(
+            population_size=500,  # Reduced for speed
+            generations=generations,
+            tournament_size=20,
+            stopping_criteria=0.01,
+            p_crossover=0.7,
+            p_subtree_mutation=0.1,
+            p_hoist_mutation=0.05,
+            p_point_mutation=0.1,
+            max_samples=0.9,
+            verbose=0,
+            parsimony_coefficient=0.01,
+            function_set=function_set,
+            random_state=42,
+            n_jobs=1,
+            const_range=(-1.0, 1.0),
+            init_depth=(2, 6),
+            function_probabilities=None,
+            metric="spearman"  # Use Spearman for robustness
+        )
+        
+        # Fit the model
+        model.fit(X, y)
+        
+        # Get predictions and calculate R²
+        y_pred = model.predict(X)
+        score = r2_score(y, y_pred)
+        
+        # Get program string
+        program_str = str(model._program)
+        
+        # Replace variable names
+        for i, name in enumerate(feature_names):
+            program_str = program_str.replace(f"X{i}", name)
+        
+        # Clean up gplearn syntax
+        program_str = program_str.replace("add(", "(").replace("sub(", "(").replace("mul(", "(").replace("div(", "(")
+        
+        # Parse to SymPy
+        try:
+            equation = sp.sympify(program_str)
+        except Exception:
+            equation = sp.Symbol("f(x)")
+            program_str = str(model._program)  # Fallback
+        
+        complexity = model._program.length_
+        
+    except Exception as e:
+        raise FormulaDiscoveryError(f"gplearn failed: {str(e)}")
     
     # Simplify equation
     try:
         equation = sp.simplify(equation)
     except:
-        pass  # Keep original if simplification fails
+        pass
     
-    # Create readable string with proper variable names
+    # Create readable string
     str_formula = str(equation)
     for i, name in enumerate(feature_names):
         str_formula = str_formula.replace(f"x{i}", name)
