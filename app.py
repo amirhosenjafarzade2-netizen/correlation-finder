@@ -312,17 +312,17 @@ def main():
                 if len(features) < 1:
                     st.warning("Need at least one feature for formula discovery.")
                 else:
-                    methods = []
+                    methods = ["linear"]  # Always available
                     if GPLEARN_AVAILABLE:
                         methods.append("gplearn")
                     if PYSR_AVAILABLE:
                         methods.append("pysr")
                     if not methods:
-                        st.error("No formula discovery methods available. Check installations.")
+                        st.error("No formula discovery methods available.")
                     else:
                         discovery_method = st.selectbox("Discovery Method", methods, index=0, key="formula_method")
                         formula = discover_formula(df[features], df[target_name], features, method=discovery_method, target_name=target_name)
-                        st.latex(formula['str_formula'])  # Render equation
+                        st.latex(formula['str_formula'])
                         st.metric("Fit Score (R²)", f"{formula['score']:.4f}")
             except Exception as e:
                 st.error(f"Formula discovery error: {str(e)}")
