@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Optional, Union, Dict
 import sympy as sp  # For equation simplification/evaluation
+from sklearn.metrics import r2_score  # For manual R² computation to avoid compat issues
 
 # Method 1: PySR (GPU-accelerated GP; best for large data/diverse ops) - DISABLED for Streamlit Cloud
 PYSR_AVAILABLE = False  # Set to False to avoid Julia/PermissionError on Cloud
@@ -108,8 +109,8 @@ def discover_formula(
             # gplearn: Customizable GP; good fallback
             # Reduced params for stability with pinned sklearn
             model = SymbolicRegressor(
-                population_size=2000,  # Smaller for faster runs
-                generations=n_iterations // 20,  # Fewer generations to avoid timeouts
+                population_size=1000,  # Smaller for faster runs
+                generations=10,  # Fixed small number to avoid long runs/errors
                 tournament_size=20,
                 stopping_criteria=0.01,  # Stop if fit improves <1%
                 p_crossover=0.7,
@@ -127,7 +128,9 @@ def discover_formula(
             for i, name in enumerate(feature_names):
                 equation_str = equation_str.replace(f'X{i}', name)
             equation = sp.sympify(equation_str)
-            score = model.score(X, y)  # R²
+            # Manual R² to avoid _validate_data error in model.score
+            y_pred = model.predict(X)
+            score = r2_score(y, y_pred)
             complexity = model._program[0]  # Depth as proxy
             str_formula = sp.pretty(equation, use_unicode=True)
         except Exception as e:
