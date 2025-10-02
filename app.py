@@ -132,20 +132,26 @@ def main():
     
     # Run button to prevent auto-execution
     if st.button("Run Selected Task"):
-        # ML method selection (for analysis/opt)
-        ml_method = st.selectbox("ML Method for Surrogates/Importance", ["rf", "nn", "lr", "svm"], index=0)
-        
-        # Optimizer for opt
-        optimizer = st.selectbox("Optimizer", ["ga", "bayesian"], index=0)
-        
-        # Target selection for opt/formula
-        target_name = st.selectbox("Target Parameter", params, index=0) if run_opt or run_formula else None
-        
-        # Interactive toggle
-        interactive = st.checkbox("Enable Interactive Exploration (for Optimization)")
-        save_files = st.checkbox("Enable Download Buttons")
-        
         all_figures = []
+        
+        # Common widgets (only if needed for the task)
+        ml_method = None
+        optimizer = None
+        target_name = None
+        interactive = False
+        save_files = False
+        
+        if run_analysis:
+            ml_method = st.selectbox("ML Method for Surrogates/Importance", ["rf", "nn", "lr", "svm"], index=0)
+        
+        if run_opt:
+            optimizer = st.selectbox("Optimizer", ["ga", "bayesian"], index=0)
+            target_name = st.selectbox("Target Parameter", params, index=0)
+            interactive = st.checkbox("Enable Interactive Exploration (for Optimization)")
+            save_files = st.checkbox("Enable Download Buttons")
+        
+        if run_formula:
+            target_name = st.selectbox("Target Parameter", params, index=0)
         
         if run_analysis:
             progress_bar = st.progress(0)
