@@ -4,22 +4,25 @@ Symbolic Formula Discovery Module.
 Uses symbolic regression to evolve interpretable mathematical formulas from data.
 Supports multiple methods: PySR (recommended for speed/diversity), gplearn (classic GP).
 Customizable operators for exponential, logarithmic, trigonometric, arithmetic, power, etc.
-Integrate into Streamlit app via: formula = discover_formula(df[features], df[target], method="gplearn")
+Integrate into Streamlit app via: formula = discover_formula(df[features], df[target], method="pysr")
 """
 
 import numpy as np
 import pandas as pd
 from typing import List, Optional, Union, Dict
 import sympy as sp  # For equation simplification/evaluation
-from sklearn.metrics import r2_score  # For manual R² computation to avoid compat issues
 
-# Method 1: PySR (GPU-accelerated GP; best for large data/diverse ops) - DISABLED for Streamlit Cloud
-PYSR_AVAILABLE = False  # Set to False to avoid Julia/PermissionError on Cloud
+# Method 1: PySR (GPU-accelerated GP; best for large data/diverse ops)
+try:
+    from pysr import PySRRegressor
+    PYSR_AVAILABLE = True
+except ImportError:
+    PYSR_AVAILABLE = False
+    print("PySR not available; install with 'pip install pysr' for best performance.")
 
 # Method 2: gplearn (Pure Python GP; reliable fallback)
 try:
     from gplearn.genetic import SymbolicRegressor
-    from sklearn.utils.validation import check_array  # Explicit import for validation
     GPLEARN_AVAILABLE = True
 except ImportError:
     GPLEARN_AVAILABLE = False
@@ -33,7 +36,7 @@ def discover_formula(
     X: Union[pd.DataFrame, np.ndarray],
     y: Union[pd.Series, np.ndarray],
     feature_names: Optional[List[str]] = None,
-    method: str = "gplearn",  # Default to gplearn
+    method: str = "pysr",  # "pysr" (best), "gplearn"
     max_complexity: int = 10,  # Pareto front limit for equation complexity
     n_iterations: int = 100,  # Search iterations/generations
     operators: Optional[List[str]] = None,  # Custom ops; default includes all requested
@@ -67,13 +70,6 @@ def discover_formula(
     if feature_names is None:
         feature_names = [f"x{i}" for i in range(X.shape[1])]
     
-    # Ensure data is validated (fixes _validate_data issues with sklearn compat)
-    try:
-        X = check_array(X, ensure_2d=True, dtype=np.float64, force_all_finite=True)
-        y = np.asarray(y, dtype=np.float64).ravel()
-    except Exception as e:
-        raise FormulaDiscoveryError(f"Data validation failed: {e}")
-    
     # Default operators: arithmetic, power, exp/log, trig (as requested)
     if operators is None:
         operators = [
@@ -86,7 +82,6 @@ def discover_formula(
     if method == "pysr" and PYSR_AVAILABLE:
         try:
             # PySR: Best for diverse ops; Pareto-optimal equations
-            from pysr import PySRRegressor
             model = PySRRegressor(
                 niterations=n_iterations,
                 binary_operators=operators[:5],  # Arithmetic/power
@@ -107,10 +102,9 @@ def discover_formula(
     elif method == "gplearn" and GPLEARN_AVAILABLE:
         try:
             # gplearn: Customizable GP; good fallback
-            # Reduced params for stability with pinned sklearn
             model = SymbolicRegressor(
-                population_size=1000,  # Smaller for faster runs
-                generations=10,  # Fixed small number to avoid long runs/errors
+                population_size=5000,  # Larger for diversity
+                generations=n_iterations // 10,  # GP generations
                 tournament_size=20,
                 stopping_criteria=0.01,  # Stop if fit improves <1%
                 p_crossover=0.7,
@@ -118,34 +112,25 @@ def discover_formula(
                 p_hoist_mutation=0.05,
                 p_point_mutation=0.1,
                 max_samples=0.9,
-                verbose=0,  # Silent for Streamlit
+                verbose=1,
                 parsimony_coefficient=0.01,  # Penalize complexity
                 function_set=("add", "sub", "mul", "div", "log", "exp", "sin", "cos", "sqrt")  # From operators
             )
             model.fit(X, y)
             equation_str = model._program[1]  # Raw program string
-            # Adapt variables for multi-features
-            for i, name in enumerate(feature_names):
-                equation_str = equation_str.replace(f'X{i}', name)
-            equation = sp.sympify(equation_str)
-            # Manual R² to avoid _validate_data error in model.score
-            y_pred = model.predict(X)
-            score = r2_score(y, y_pred)
+            equation = sp.sympify(equation_str.replace("X0", feature_names[0]).replace("X1", feature_names[1]))  # Adapt vars
+            score = model.score(X, y)  # R²
             complexity = model._program[0]  # Depth as proxy
             str_formula = sp.pretty(equation, use_unicode=True)
         except Exception as e:
             raise FormulaDiscoveryError(f"gplearn failed: {e}")
     
     else:
-        # Fallback: Force gplearn if available
-        if GPLEARN_AVAILABLE:
-            return discover_formula(X, y, feature_names, "gplearn", max_complexity, n_iterations, operators, target_name)
-        else:
-            raise FormulaDiscoveryError(f"Method '{method}' unavailable. Install gplearn.")
+        raise FormulaDiscoveryError(f"Method '{method}' unavailable. Install PySR/gplearn or choose another.")
     
     # Simplify with SymPy (common to both)
     equation = sp.simplify(equation)
-    str_formula = str(equation)
+    str_formula = str(equation).replace("x0", feature_names[0]).replace("x1", feature_names[1])  # Adapt for multi-var
     
     return {
         "equation": equation,  # SymPy expr for eval/plot
@@ -166,6 +151,6 @@ if __name__ == "__main__":
     })
     y_sample = np.exp(X_sample['x0']) + np.sin(X_sample['x1']) + X_sample['x2'] + np.random.normal(0, 0.1, 100)
     
-    formula = discover_formula(X_sample, y_sample, feature_names=['x0', 'x1', 'x2'], method="gplearn")
+    formula = discover_formula(X_sample, y_sample, feature_names=['x0', 'x1', 'x2'], method="pysr")
     print(f"Discovered: {formula['str_formula']}")
     print(f"Score (R²): {formula['score']:.4f}")
