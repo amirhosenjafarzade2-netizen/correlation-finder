@@ -12,9 +12,18 @@ import pandas as pd
 from typing import List, Optional, Union, Dict
 import sympy as sp  # For equation simplification/evaluation
 from sklearn.metrics import r2_score  # For manual R² computation to avoid compat issues
+import structlog
 
-# Method 1: PySR (GPU-accelerated GP; best for large data/diverse ops) - DISABLED for Streamlit Cloud
-PYSR_AVAILABLE = False  # Set to False to avoid Julia/PermissionError on Cloud
+# Setup logging
+logger = structlog.get_logger()
+
+# Method 1: PySR (GPU-accelerated GP; best for large data/diverse ops)
+try:
+    from pysr import PySRRegressor
+    PYSR_AVAILABLE = True  # Enable locally; set to False for Streamlit Cloud
+except ImportError:
+    PYSR_AVAILABLE = False
+    logger.warning("PySR not available; install with 'pip install pysr' and ensure Julia is installed.")
 
 # Method 2: gplearn (Pure Python GP; reliable fallback)
 try:
@@ -23,7 +32,7 @@ try:
     GPLEARN_AVAILABLE = True
 except ImportError:
     GPLEARN_AVAILABLE = False
-    print("gplearn not available; install with 'pip install gplearn'.")
+    logger.warning("gplearn not available; install with 'pip install gplearn'.")
 
 class FormulaDiscoveryError(Exception):
     """Raised when formula discovery fails."""
@@ -72,9 +81,10 @@ def discover_formula(
         X = check_array(X, ensure_2d=True, dtype=np.float64, force_all_finite=True)
         y = np.asarray(y, dtype=np.float64).ravel()
     except Exception as e:
+        logger.error("Data validation failed", error=str(e))
         raise FormulaDiscoveryError(f"Data validation failed: {e}")
     
-    # Default operators: arithmetic, power, exp/log, trig (as requested)
+    # Default operators: arithmetic, power, exp/log, trig
     if operators is None:
         operators = [
             # Binary
@@ -86,7 +96,6 @@ def discover_formula(
     if method == "pysr" and PYSR_AVAILABLE:
         try:
             # PySR: Best for diverse ops; Pareto-optimal equations
-            from pysr import PySRRegressor
             model = PySRRegressor(
                 niterations=n_iterations,
                 binary_operators=operators[:5],  # Arithmetic/power
@@ -101,13 +110,14 @@ def discover_formula(
             score = model.equations_[-1][2]  # Loss (lower better; convert to R² if needed)
             complexity = len(sp.preorder_traversal(equation))
             str_formula = sp.pretty(equation, use_unicode=True)
+            logger.info("PySR formula discovered", str_formula=str_formula, score=score, complexity=complexity)
         except Exception as e:
+            logger.error("PySR failed", error=str(e))
             raise FormulaDiscoveryError(f"PySR failed: {e}")
     
     elif method == "gplearn" and GPLEARN_AVAILABLE:
         try:
             # gplearn: Customizable GP; good fallback
-            # Reduced params for stability with pinned sklearn
             model = SymbolicRegressor(
                 population_size=1000,  # Smaller for faster runs
                 generations=10,  # Fixed small number to avoid long runs/errors
@@ -120,32 +130,42 @@ def discover_formula(
                 max_samples=0.9,
                 verbose=0,  # Silent for Streamlit
                 parsimony_coefficient=0.01,  # Penalize complexity
-                function_set=("add", "sub", "mul", "div", "log", "exp", "sin", "cos", "sqrt")  # From operators
+                function_set=("add", "sub", "mul", "div", "log", "exp", "sin", "cos", "sqrt"),
+                random_state=None,  # Avoid deprecation
+                n_jobs=1  # Safe default for compatibility
             )
-            model.fit(X, y)
+            # Explicit kwargs for sklearn 1.5+ compatibility
+            model.fit(X=X, y=y)
             equation_str = model._program[1]  # Raw program string
             # Adapt variables for multi-features
             for i, name in enumerate(feature_names):
                 equation_str = equation_str.replace(f'X{i}', name)
             equation = sp.sympify(equation_str)
-            # Manual R² to avoid _validate_data error in model.score
-            y_pred = model.predict(X)
+            # Manual R² to avoid issues
+            y_pred = model.predict(X=X)
             score = r2_score(y, y_pred)
             complexity = model._program[0]  # Depth as proxy
             str_formula = sp.pretty(equation, use_unicode=True)
+            logger.info("gplearn formula discovered", str_formula=str_formula, score=score, complexity=complexity)
         except Exception as e:
+            logger.error("gplearn failed", error=str(e))
             raise FormulaDiscoveryError(f"gplearn failed: {e}")
     
     else:
         # Fallback: Force gplearn if available
         if GPLEARN_AVAILABLE:
+            logger.info("Falling back to gplearn", requested_method=method)
             return discover_formula(X, y, feature_names, "gplearn", max_complexity, n_iterations, operators, target_name)
         else:
-            raise FormulaDiscoveryError(f"Method '{method}' unavailable. Install gplearn.")
+            logger.error("No formula discovery methods available", requested_method=method)
+            raise FormulaDiscoveryError(f"Method '{method}' unavailable. Install gplearn or pysr.")
     
     # Simplify with SymPy (common to both)
-    equation = sp.simplify(equation)
-    str_formula = str(equation)
+    try:
+        equation = sp.simplify(equation)
+        str_formula = str(equation)
+    except Exception as e:
+        logger.warning("SymPy simplification failed; using raw equation", error=str(e))
     
     return {
         "equation": equation,  # SymPy expr for eval/plot
@@ -166,6 +186,9 @@ if __name__ == "__main__":
     })
     y_sample = np.exp(X_sample['x0']) + np.sin(X_sample['x1']) + X_sample['x2'] + np.random.normal(0, 0.1, 100)
     
-    formula = discover_formula(X_sample, y_sample, feature_names=['x0', 'x1', 'x2'], method="gplearn")
-    print(f"Discovered: {formula['str_formula']}")
-    print(f"Score (R²): {formula['score']:.4f}")
+    try:
+        formula = discover_formula(X_sample, y_sample, feature_names=['x0', 'x1', 'x2'], method="gplearn")
+        print(f"Discovered: {formula['str_formula']}")
+        print(f"Score (R²): {formula['score']:.4f}")
+    except FormulaDiscoveryError as e:
+        print(f"Error: {e}")
