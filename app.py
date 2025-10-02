@@ -19,7 +19,6 @@ from models import train_neural_network, compute_shap_values, predict_nn
 from optimization import optimize_target
 from visualization import generate_viz_from_analysis
 from utils import logger, MissingDataError, InvalidPressureError, impute_missing_values
-from formula_discovery import discover_formula  # Added explicit import
 
 # Configure Plotly for Streamlit
 pio.renderers.default = 'browser'  # Or 'notebook' if needed
@@ -123,173 +122,230 @@ def main():
     bubble_point = st.session_state.get('bubble_point', config.bubble_point_default)
     
     # Task selection
-    task_options = ["Select a Task"] + ["1: Relationship Analysis", "2: Target Optimization", "3: Symbolic Formula Discovery", "4: Both"]
-    task = st.selectbox("Select Task", task_options, index=0)  # Default to "Select a Task"
+    task_options = ["1: Relationship Analysis", "2: Target Optimization", "3: Both"]
+    task = st.selectbox("Task", task_options)
+    save_files = st.checkbox("Save/Download results")
     
-    run_analysis = task in ["1: Relationship Analysis", "4: Both"]
-    run_opt = task in ["2: Target Optimization", "4: Both"]
-    run_formula = task in ["3: Symbolic Formula Discovery", "4: Both"]
+    # ML Method selection with radio and full names (expanded to more methods from original intent)
+    ml_method_options = [
+        ("Random Forest Regressor", "rf"),
+        ("Neural Network", "nn"),
+        ("Linear Regression", "lr"),
+        ("Support Vector Regression", "svm"),
+        ("Decision Tree Regressor", "dt"),
+        ("Ridge Regression", "ridge")
+    ]
+    selected_ml = st.radio(
+        "ML Method for Analysis & Optimization",
+        [opt[0] for opt in ml_method_options],
+        index=0,
+        horizontal=True
+    )
+    ml_method = next(opt[1] for opt in ml_method_options if opt[0] == selected_ml)
     
-    # Run button to prevent auto-execution
-    if st.button("Run Selected Task"):
-        all_figures = []
-        
-        # Common widgets (only if needed for the task)
-        ml_method = None
-        optimizer = None
-        target_name = None
-        interactive = False
-        save_files = False
-        
-        if run_analysis:
-            ml_method = st.selectbox("ML Method for Surrogates/Importance", ["rf", "nn", "lr", "svm"], index=0)
-        
-        if run_opt:
-            optimizer = st.selectbox("Optimizer", ["ga", "bayesian"], index=0)
-            target_name = st.selectbox("Target Parameter", params, index=0)
-            interactive = st.checkbox("Enable Interactive Exploration (for Optimization)")
-            save_files = st.checkbox("Enable Download Buttons")
-        
-        if run_formula:
-            target_name = st.selectbox("Target Parameter", params, index=0)
-        
-        if run_analysis:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            try:
-                status_text.text("Classifying regimes...")
-                df_analysis = df.copy()
-                if pressure_col:
-                    df_analysis = classify_regimes(df_analysis, pressure_col, bubble_point)
-                progress_bar.progress(0.1)
-                
-                status_text.text("Computing correlations and MI...")
-                results = analyze_relationships(df_analysis, params, pressure_col, bubble_point, config, ml_method=ml_method)
-                progress_bar.progress(0.6)
-                
-                status_text.text("Generating visualizations...")
-                figs = generate_viz_from_analysis(results, params, config)
-                progress_bar.progress(1.0)
-                all_figures.extend(figs)
-                
-                # Display figs with unique keys to avoid duplicate ID
-                for i, fig in enumerate(figs):
-                    if isinstance(fig, go.Figure):
-                        st.plotly_chart(fig, use_container_width=True, key=f"analysis_plotly_{i}")
-                    else:
-                        st.pyplot(fig)
-                
-                # Downloads if save_files (adapted from original formulas)
-                if save_files:
-                    csv_buffer = io.StringIO()
-                    results['corr_matrix'].to_csv(csv_buffer, index=True)
-                    st.download_button(
-                        "Download Correlation Matrix",
-                        csv_buffer.getvalue(),
-                        "correlation_matrix.csv",
-                        "text/csv"
+    run_analysis = False
+    run_opt = False
+    if task == task_options[0] or task == task_options[2]:
+        run_analysis = st.button("Run Analysis")
+    if task == task_options[1] or task == task_options[2]:
+        col_opt1, col_opt2 = st.columns(2)
+        with col_opt1:
+            optimizer = st.selectbox("Optimizer", ["ga", "bayesian"])
+        with col_opt2:
+            target_name = st.selectbox("Target Parameter", params)
+        interactive = st.checkbox("Enable Interactive Exploration")
+        run_opt = st.button("Run Optimization")
+    
+    all_figures = []
+    
+    if run_analysis:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        try:
+            status_text.text("Classifying regimes...")
+            df_analysis = df.copy()
+            if pressure_col:
+                df_analysis = classify_regimes(df_analysis, pressure_col, bubble_point)
+            progress_bar.progress(0.1)
+            
+            status_text.text("Computing correlations and MI...")
+            results = analyze_relationships(df_analysis, params, pressure_col, bubble_point, config, ml_method=ml_method)
+            progress_bar.progress(0.6)
+            
+            status_text.text("Generating visualizations...")
+            figs = generate_viz_from_analysis(results, params, config)
+            progress_bar.progress(1.0)
+            all_figures.extend(figs)
+            
+            # Display figs with unique keys to avoid duplicate ID
+            for i, fig in enumerate(figs):
+                if isinstance(fig, go.Figure):
+                    st.plotly_chart(fig, use_container_width=True, key=f"analysis_plotly_{i}")
+                else:
+                    st.pyplot(fig)
+            
+            # Downloads if save_files (adapted from original formulas)
+            if save_files:
+                csv_buffer = io.StringIO()
+                results['corr_matrix'].to_csv(csv_buffer, index=True)
+                st.download_button(
+                    "Download Correlation Matrix",
+                    csv_buffer.getvalue(),
+                    "correlation_matrix.csv",
+                    "text/csv"
+                )
+                # Similar for MI matrices, RF importance (as in original)
+            
+            st.success("Analysis complete!")
+            progress_bar.empty()
+            status_text.empty()
+            
+            # === FORMULA DISCOVERY SECTION ===
+            st.markdown("---")
+            st.subheader("🔬 Symbolic Formula Discovery")
+            st.write("Discover interpretable mathematical formulas from your data using symbolic regression.")
+            
+            # Allow user to select target for formula discovery
+            formula_target = st.selectbox(
+                "Select target parameter for formula discovery",
+                params,
+                key="formula_target_select"
+            )
+            
+            if st.button("Discover Symbolic Formula"):
+                formula_progress = st.progress(0)
+                formula_status = st.empty()
+                try:
+                    formula_status.text("Discovering symbolic formula...")
+                    from formula_discovery import discover_formula
+                    
+                    features = [p for p in params if p != formula_target]
+                    formula_progress.progress(0.3)
+                    
+                    formula = discover_formula(
+                        df[features], 
+                        df[formula_target], 
+                        features, 
+                        method=ml_method, 
+                        target_name=formula_target
                     )
-                    # Similar for MI matrices, RF importance (as in original)
-                
-                st.success("Analysis complete!")
-                progress_bar.empty()
-                status_text.empty()
-                
-            except Exception as e:
-                st.error(f"Analysis error: {str(e)}")
-                logger.error("Analysis failed", error=str(e))
-                progress_bar.empty()
-                status_text.empty()
-        
-        if run_opt:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            try:
-                status_text.text("Training surrogate model...")
-                optimal_df, opt_figs, shap_data = optimize_target(df, params, target_name, config, optimizer, ml_method=ml_method)
-                progress_bar.progress(0.4)
-                
-                status_text.text("Running optimization...")
-                # Progress updated in optimize_target_ga/bayesian via st.progress calls in loops
-                progress_bar.progress(0.8)
-                
-                all_figures.extend(opt_figs)
-                
-                st.subheader("Optimal Parameters")
-                st.dataframe(optimal_df)
-                for i, fig in enumerate(opt_figs):
-                    st.pyplot(fig, key=f"opt_pyplot_{i}")
-                
-                if save_files:
-                    excel_buffer = io.BytesIO()
-                    with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
-                        optimal_df.to_excel(writer, index=False)
-                    st.download_button(
-                        "Download Optimal Params",
-                        excel_buffer.getvalue(),
-                        f"optimal_{target_name}.xlsx",
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                
-                if interactive:
-                    # Interactive sliders (replaces ipywidgets, as in original)
-                    st.subheader("Interactive Parameter Exploration")
-                    features = [p for p in params if p != target_name]
-                    model, scaler = train_neural_network(df[features], df[target_name], config)
-                    test_values = {}
-                    for feat in features:
-                        test_values[feat] = st.slider(
-                            feat, 
-                            float(df[feat].min()), 
-                            float(df[feat].max()), 
-                            float(df[feat].mean())
+                    formula_progress.progress(0.9)
+                    
+                    # Display results
+                    st.success("Formula discovered successfully!")
+                    
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.markdown("**Discovered Formula:**")
+                        st.latex(formula['str_formula'])
+                    with col2:
+                        st.metric("Model Fit (R²)", f"{formula['score']:.4f}")
+                    
+                    # Additional formula info if available
+                    if 'complexity' in formula:
+                        st.info(f"Formula Complexity: {formula['complexity']}")
+                    
+                    # Option to save formula
+                    if save_files:
+                        formula_text = f"Target: {formula_target}\n\nFormula:\n{formula['str_formula']}\n\nR² Score: {formula['score']:.4f}"
+                        st.download_button(
+                            "Download Formula",
+                            formula_text,
+                            f"formula_{formula_target}.txt",
+                            "text/plain"
                         )
                     
-                    X_test = pd.DataFrame([test_values], columns=features)
-                    X_test_scaled = scaler.transform(X_test)
-                    pred = predict_nn(model, X_test_scaled, config.batch_size)[0][0]
-                    st.metric(f"Predicted {target_name}", pred)
+                    formula_progress.progress(1.0)
+                    formula_progress.empty()
+                    formula_status.empty()
                     
-                    # Simple sensitivity plot (fixed from original bug)
-                    selected_feat = st.selectbox("Sensitivity to", features)
-                    feat_range = np.linspace(df[selected_feat].min(), df[selected_feat].max(), 50)
-                    sens_preds = []
-                    for val in feat_range:
-                        temp_df = X_test.copy()
-                        temp_df[selected_feat] = val
-                        temp_scaled = scaler.transform(temp_df)
-                        sens_preds.append(predict_nn(model, temp_scaled, config.batch_size)[0][0])
-                    fig_sens = px.line(x=feat_range, y=sens_preds, title=f"Sensitivity of {target_name} to {selected_feat}")
-                    st.plotly_chart(fig_sens, use_container_width=True, key="sensitivity_plot")
-                
-                st.success("Optimization complete!")
-                progress_bar.progress(1.0)
-                progress_bar.empty()
-                status_text.empty()
-                
-            except Exception as e:
-                st.error(f"Optimization error: {str(e)}")
-                logger.error("Optimization failed", error=str(e))
-                progress_bar.empty()
-                status_text.empty()
-        
-        if run_formula:
-            try:
-                st.subheader("Symbolic Formula Discovery")
+                except ImportError:
+                    st.error("Formula discovery module not found. Please ensure 'formula_discovery.py' is in your project directory.")
+                    formula_progress.empty()
+                    formula_status.empty()
+                except Exception as e:
+                    st.error(f"Formula discovery error: {str(e)}")
+                    logger.error("Formula discovery failed", error=str(e))
+                    formula_progress.empty()
+                    formula_status.empty()
+            
+        except Exception as e:
+            st.error(f"Analysis error: {str(e)}")
+            logger.error("Analysis failed", error=str(e))
+            progress_bar.empty()
+            status_text.empty()
+    
+    if run_opt:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        try:
+            status_text.text("Training surrogate model...")
+            optimal_df, opt_figs, shap_data = optimize_target(df, params, target_name, config, optimizer, ml_method=ml_method)
+            progress_bar.progress(0.4)
+            
+            status_text.text("Running optimization...")
+            # Progress updated in optimize_target_ga/bayesian via st.progress calls in loops
+            progress_bar.progress(0.8)
+            
+            all_figures.extend(opt_figs)
+            
+            st.subheader("Optimal Parameters")
+            st.dataframe(optimal_df)
+            for i, fig in enumerate(opt_figs):
+                st.pyplot(fig, key=f"opt_pyplot_{i}")
+            
+            if save_files:
+                excel_buffer = io.BytesIO()
+                with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+                    optimal_df.to_excel(writer, index=False)
+                st.download_button(
+                    "Download Optimal Params",
+                    excel_buffer.getvalue(),
+                    f"optimal_{target_name}.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            
+            if interactive:
+                # Interactive sliders (replaces ipywidgets, as in original)
+                st.subheader("Interactive Parameter Exploration")
                 features = [p for p in params if p != target_name]
-                if len(features) < 1:
-                    st.warning("Need at least one feature for formula discovery.")
-                else:
-                    discovery_method = st.selectbox("Discovery Method", ["gplearn"], index=0)  # Default to gplearn
-                    formula = discover_formula(df[features], df[target_name], features, method=discovery_method, target_name=target_name)
-                    st.latex(formula['str_formula'])  # Render equation
-                    st.metric("Fit Score (R²)", formula['score'])
-            except Exception as e:
-                st.error(f"Formula discovery error: {str(e)}")
-                logger.error("Formula discovery failed", error=str(e))
-    else:
-        if task == "Select a Task":
-            st.info("Please select a task and click 'Run Selected Task' to begin.")
+                model, scaler = train_neural_network(df[features], df[target_name], config)
+                test_values = {}
+                for feat in features:
+                    test_values[feat] = st.slider(
+                        feat, 
+                        float(df[feat].min()), 
+                        float(df[feat].max()), 
+                        float(df[feat].mean())
+                    )
+                
+                X_test = pd.DataFrame([test_values], columns=features)
+                X_test_scaled = scaler.transform(X_test)
+                pred = predict_nn(model, X_test_scaled, config.batch_size)[0][0]
+                st.metric(f"Predicted {target_name}", pred)
+                
+                # Simple sensitivity plot (fixed from original bug)
+                selected_feat = st.selectbox("Sensitivity to", features)
+                feat_range = np.linspace(df[selected_feat].min(), df[selected_feat].max(), 50)
+                sens_preds = []
+                for val in feat_range:
+                    temp_df = X_test.copy()
+                    temp_df[selected_feat] = val
+                    temp_scaled = scaler.transform(temp_df)
+                    sens_preds.append(predict_nn(model, temp_scaled, config.batch_size)[0][0])
+                fig_sens = px.line(x=feat_range, y=sens_preds, title=f"Sensitivity of {target_name} to {selected_feat}")
+                st.plotly_chart(fig_sens, use_container_width=True, key="sensitivity_plot")
+            
+            st.success("Optimization complete!")
+            progress_bar.progress(1.0)
+            progress_bar.empty()
+            status_text.empty()
+            
+        except Exception as e:
+            st.error(f"Optimization error: {str(e)}")
+            logger.error("Optimization failed", error=str(e))
+            progress_bar.empty()
+            status_text.empty()
 
 if __name__ == "__main__":
     main()
