@@ -9,7 +9,7 @@ import pandas as pd
 import numpy as np
 import io
 import streamlit as st
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Any  # Added Any for type hint
 from config import Config
 from utils import handle_outliers, impute_missing_values, logger, MissingDataError, InvalidPressureError
 
@@ -28,7 +28,7 @@ def create_sample_data(rng: np.random.Generator, n_samples: int = 100) -> pd.Dat
     })
 
 def load_and_preprocess_data(
-    uploaded_files: List[st.runtime.uploaded_file.UploadedFile], 
+    uploaded_files: List[Any],  # Fixed: Use Any instead of st.runtime.uploaded_file.UploadedFile
     n_rows: Optional[int], 
     config: Config, 
     rng: np.random.Generator
@@ -45,7 +45,10 @@ def load_and_preprocess_data(
     for i, uploaded_file in enumerate(uploaded_files):
         status_text.text(f"Processing {uploaded_file.name}...")
         try:
-            df_temp = pd.read_excel(io.BytesIO(uploaded_file.read()), sheet_name=0, engine='openpyxl')
+            # Read the file content (seek(0) ensures it's at start if needed)
+            file_content = uploaded_file.read()
+            uploaded_file.seek(0)  # Reset for potential re-reads
+            df_temp = pd.read_excel(io.BytesIO(file_content), sheet_name=0, engine='openpyxl')
             numeric_cols = df_temp.select_dtypes(include=[np.float64, np.int64]).columns.tolist()
             if not numeric_cols:
                 logger.warning("No numeric columns found", file=uploaded_file.name)
